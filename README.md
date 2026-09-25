@@ -4,6 +4,8 @@ See whether your band drifts. Put a phone, tablet or laptop in the rehearsal roo
 
 Everything runs in the browser. Audio never leaves the device, and there is no server, so it can be hosted on GitHub Pages.
 
+https://flugge00.github.io/LiveTempoAnalyzer/
+
 ## Features
 
 - **Live mode:** microphone → tempo reading every 0.25 s, big BPM readout, drift vs. start (or vs. a target tempo), trend (BPM/min), steadiness, and a moving graph. Markers (press `M`). The target tempo sits next to the Start button. ×2 / ÷2 in Settings fix half/double-tempo readings. The screen stays awake while recording.
