@@ -48,6 +48,12 @@
 - [x] Count-in at the target tempo (typed next to the Count in button): 1–5 bars of click and/or full-screen flash, then silence. Starts recording if needed and drops a "Count-in" marker. The start tempo is measured after it.
 - [ ] Tune section detection on more real rehearsal recordings (names are shaky; boundaries mostly OK). Band corrections made with the new editor, exported as .zip, can now serve as ground truth for tuning.
 
+## Small follow-ups (done, 2026-09-25)
+
+- [x] Target tempo moved next to Count in; ÷2/×2 moved into Settings (rarely needed); count-in up to 5 bars
+- [x] Metronome icon (needle off-centre = drift, matching the app's whole premise) as favicon (SVG) and PWA icons
+- [x] Dark/light toggle in the header, remembered per device; follows the OS until then
+
 ## Next ideas
 
 - Check the automatic downbeat on more real songs (on the two test recordings the phase is stable, but only by ear can we confirm beat 1 vs 3 on "Memories")

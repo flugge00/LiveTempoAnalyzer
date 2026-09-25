@@ -27,8 +27,12 @@
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
+/* Light variant: the OS setting, or the header toggle overriding it either way.
+   :not([data-theme="dark"]) keeps an explicit "dark" choice from being re-lit by
+   a light OS, and the plain [data-theme="light"] rule below outranks the dark
+   default when the OS is dark but the toggle says light. */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     color-scheme: light;
     --page: #f9f9f7;
     --surface-1: #fcfcfb;
@@ -44,6 +48,22 @@
     --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
     --series-5: #e87ba4; --series-6: #008300; --series-7: #4a3aa7; --series-8: #e34948;
   }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --surface-2: #f0efec;
+  --surface-3: #e1e0d9;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+  --series-5: #e87ba4; --series-6: #008300; --series-7: #4a3aa7; --series-8: #e34948;
 }
 
 * { box-sizing: border-box; }
@@ -72,6 +92,8 @@ a { color: var(--accent); }
 }
 .tabs a:hover { background: var(--surface-2); }
 .tabs a.active { background: var(--surface-3); color: var(--text-primary); }
+.theme-toggle { margin-left: auto; padding: 0; width: 40px; }
+.theme-toggle svg { width: 18px; height: 18px; display: block; margin: 0 auto; }
 
 main { max-width: 1200px; margin: 0 auto; padding: 20px; }
 .view { display: flex; flex-direction: column; gap: var(--gap); }

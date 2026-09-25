@@ -12,6 +12,7 @@ const FILES = [
   'index.html',
   'manifest.webmanifest',
   'css/style.css',
+  'icons/icon.svg',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/icon-maskable-512.png',
@@ -44,6 +45,7 @@ const FILES = [
   'js/ui/dom.js',
   'js/ui/live-view.js',
   'js/ui/sessions-view.js',
+  'js/ui/theme.js',
 ];
 
 self.addEventListener('install', (e) => {

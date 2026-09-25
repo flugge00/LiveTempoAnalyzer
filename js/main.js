@@ -5,10 +5,12 @@ import { initLive } from './ui/live-view.js';
 import { initAnalyze } from './ui/analysis-view.js';
 import { initSessions } from './ui/sessions-view.js';
 import { initCompare } from './ui/compare-view.js';
+import { initTheme } from './ui/theme.js';
 import { $, toast } from './ui/dom.js';
 import { readSessionsFile, importSessions } from './store/share.js';
 import * as db from './store/db.js';
 
+initTheme();
 const live = initLive();
 const analyze = initAnalyze({ onImportFile: (f) => importFiles([f]) });
 const sessions = initSessions({ onImportFiles: importFiles });

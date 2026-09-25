@@ -21,6 +21,7 @@ https://flugge00.github.io/LiveTempoAnalyzer/
 - **Compare takes:** tick sessions of the same song and overlay their tempo curves, with a take-by-take table ("are we getting steadier?").
 - **Sharing:** export one or more sessions as a `.zip` (analysis + audio) and import it on another device. CSV export for spreadsheets.
 - **Works offline and installs as an app** (Add to Home Screen / Install) thanks to a service worker.
+- **Dark / light toggle** in the header. Follows the OS setting until you tap it once; after that your choice is remembered on this device.
 - **Sessions** are stored locally in the browser (IndexedDB).
 - A **demo recording** (Analyze tab, or `?demo` in the URL) shows what the analysis looks like.
 
@@ -35,7 +36,7 @@ python -m http.server 8000
 
 There is no build step and there are no dependencies. The code is plain ES modules.
 
-The service worker is not registered on `localhost`, so you always get fresh files while developing. Add `?sw` to the URL to test offline mode locally. When you add a file under `js/`, also add it to `FILES` in `sw.js`; the tests check this. The icons are drawn by `python tools/make-icons.py`.
+The service worker is not registered on `localhost`, so you always get fresh files while developing. Add `?sw` to the URL to test offline mode locally. When you add a file under `js/`, also add it to `FILES` in `sw.js`; the tests check this. The icon (favicon, home-screen icon, `apple-touch-icon`) is drawn by `python tools/make-icons.py`, which writes `icons/icon.svg` and the PNGs from the same coordinates.
 
 ## Deploy to GitHub Pages
 
