@@ -5,8 +5,10 @@ import { onsetEnvelope } from '../dsp/onset.js';
 import { TempoModel, tempoCurve, resolveOctaves } from '../dsp/tempo.js';
 import { trackBeats, attackSpread, beatRuns } from '../dsp/beats.js';
 import { segmentSong } from '../dsp/segment.js';
+import { beatAccents } from '../dsp/downbeat.js';
 
-export const ANALYSIS_VERSION = 1;
+// 2: per-beat accent cues for downbeat detection
+export const ANALYSIS_VERSION = 2;
 
 /**
  * @param {Float32Array} samples mono
@@ -15,7 +17,7 @@ export const ANALYSIS_VERSION = 1;
  * @param {(stage:string, fraction:number)=>void} [onProgress]
  */
 export function analyzeAudio(samples, sampleRate, opts = {}, onProgress = () => {}) {
-  const det = onsetEnvelope(samples, sampleRate, { features: opts.sections !== false }, (p) => onProgress('Listening for onsets', p * 0.45));
+  const det = onsetEnvelope(samples, sampleRate, { features: true }, (p) => onProgress('Listening for onsets', p * 0.45));
   const fps = det.fps;
   const env = Float64Array.from(det.envelope);
 
@@ -36,6 +38,7 @@ export function analyzeAudio(samples, sampleRate, opts = {}, onProgress = () => 
   const beatFrames = trackBeats(env, fps, curve, { active });
   const beats = beatFrames.map((f) => det.timeOf(f));
   const spreadMs = attackSpread(env, fps, beatFrames);
+  const accent = beatAccents(env, det.features(), beatFrames);
 
   let sections = [];
   if (opts.sections !== false && beats.length) {
@@ -65,6 +68,7 @@ export function analyzeAudio(samples, sampleRate, opts = {}, onProgress = () => 
     },
     beats: beats.map((t) => Math.round(t * 10000) / 10000),
     spreadMs: spreadMs.map((s) => (s == null ? null : Math.round(s * 10) / 10)),
+    accent,
     sections,
     levels: { dt: step / fps, db: levels },
   };

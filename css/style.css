@@ -99,6 +99,9 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px; }
 .seg .btn:first-child { border-radius: 10px 0 0 10px; }
 .seg .btn:last-child { border-radius: 0 10px 10px 0; }
 .seg .btn + .btn { border-left: none; }
+.seg .btn[aria-pressed="true"] { background: var(--surface-3); color: var(--text-primary); font-weight: 600; }
+.seg .btn[aria-pressed="false"] { color: var(--text-secondary); }
+a.btn { text-decoration: none; }
 
 .btn-record { min-width: 140px; min-height: 56px; font-size: 1.1rem; font-weight: 600; border-radius: 999px; }
 .btn-record .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--critical); }
@@ -180,7 +183,7 @@ label { color: var(--text-secondary); font-size: 0.9rem; }
 .drop .inline { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .drop .inline input { width: 90px; }
 .progress-bar { height: 8px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin-bottom: 8px; }
-#progressFill { height: 100%; width: 0; background: var(--accent); transition: width 120ms; }
+.progress-fill { height: 100%; width: 0; background: var(--accent); transition: width 120ms; }
 
 .result-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 8px; }
 .title-input { font-size: 1.3rem; font-weight: 600; background: transparent; border-color: transparent; padding-left: 0; min-width: 0; flex: 1 1 260px; }
@@ -201,6 +204,48 @@ table.data tr.clickable:hover td { background: var(--surface-2); }
 table.data input.name { width: 120px; min-height: 30px; padding: 2px 6px; background: transparent; border-color: transparent; }
 table.data input.name:hover, table.data input.name:focus { border-color: var(--border); background: var(--surface-2); }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: middle; }
+.swatch.line { width: 16px; height: 3px; border-radius: 2px; }
+table.data tr.current td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+table.data tr.selected td { background: var(--surface-2); }
+table.data .check { width: 32px; padding-right: 0; }
+table.data input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); vertical-align: middle; }
+
+/* card header with a title on the left and tools on the right */
+.card-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 8px 16px; margin-bottom: 4px; }
+.sec-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+#sessCard.over { border-color: var(--accent); }
+.inline-fields { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* beat counter while playing back */
+.beat-counter { display: inline-flex; gap: 4px; }
+.beat-counter span {
+  display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px;
+  font-size: 0.8rem; font-variant-numeric: tabular-nums; color: var(--text-muted); background: var(--surface-2);
+}
+.beat-counter span.on { background: var(--text-secondary); color: var(--page); }
+.beat-counter span:first-child.on { background: var(--accent); color: var(--accent-ink); }
+
+/* count-in overlay: readable across the room */
+.count-overlay {
+  position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--page) 92%, transparent); cursor: pointer; user-select: none;
+}
+#countNum { font-size: min(60vw, 60vh); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.count-sub { color: var(--text-secondary); font-size: 1.2rem; }
+.count-overlay.one #countNum { color: var(--accent); }
+.count-overlay.flash.beat { animation: count-flash 180ms ease-out; }
+.count-overlay.flash.beat.one { animation-name: count-flash-one; }
+@keyframes count-flash { from { background: var(--text-secondary); } }
+@keyframes count-flash-one { from { background: var(--accent); } }
+@media (prefers-reduced-motion: reduce) {
+  .count-overlay.flash.beat, .count-overlay.flash.beat.one { animation-duration: 1ms; }
+}
+
+.update-notice {
+  position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 25;
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 16px;
+  background: var(--surface-3); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.3);
+}
 
 .profile { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
 .profile-row { display: grid; grid-template-columns: 56px 1fr 70px; align-items: center; gap: 8px; font-size: 0.9rem; }

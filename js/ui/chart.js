@@ -1,9 +1,11 @@
 ﻿// Canvas time-series chart for tempo over time.
 // Features: multiple series (line / dots) with gaps, song-section strip,
 // markers, target line + tolerance band, level lane, playhead, live "follow"
-// mode, wheel/drag/pinch zoom & pan, crosshair tooltip, click-to-seek.
+// mode, wheel/drag/pinch zoom & pan, crosshair tooltip, click-to-seek,
+// draggable section boundaries (option sectionEdit: {snap(t)}, emits 'sections').
 
 import { fmtTime } from '../analysis/report.js';
+import { moveEdge } from '../analysis/sections.js';
 
 const PAD = { left: 46, right: 14, top: 8, bottom: 24 };
 const STRIP_H = 22, LEVEL_H = 34;
@@ -96,7 +98,7 @@ export class TimeChart extends EventTarget {
       }
     }
     const ref = this.data.reference;
-    if (ref?.value) { lo = Math.min(lo, ref.value - (ref.band || 0)); hi = Math.max(hi, ref.value + (ref.band || 0)); }
+    if (ref?.value != null) { lo = Math.min(lo, ref.value - (ref.band || 0)); hi = Math.max(hi, ref.value + (ref.band || 0)); }
     if (!isFinite(lo)) { lo = 100; hi = 140; }
     const pad = (hi - lo) * 0.12;
     lo -= pad; hi += pad;
@@ -162,6 +164,17 @@ export class TimeChart extends EventTarget {
         ctx.fillText(label, a + 6, sy + STRIP_H / 2);
       }
     }
+    // drag handles on the section edges
+    if (this.o.sectionEdit) {
+      ctx.fillStyle = C.ink;
+      for (const e of this._edges()) {
+        const x = X(e.t);
+        if (x < P.x - 1 || x > P.x + P.w + 1) continue;
+        const active = this._edgeDrag && this._edgeDrag.edge.i === e.i && this._edgeDrag.edge.side === e.side;
+        roundRect(ctx, x - (active ? 2.5 : 1.5), PAD.top + 3, active ? 5 : 3, STRIP_H - 6, 1.5);
+        ctx.fill();
+      }
+    }
 
     // grid + y ticks
     ctx.strokeStyle = C.grid;
@@ -187,7 +200,7 @@ export class TimeChart extends EventTarget {
 
     // reference line + tolerance band
     const ref = this.data.reference;
-    if (ref?.value) {
+    if (ref?.value != null) {
       if (ref.band) {
         ctx.fillStyle = C.ink2; ctx.globalAlpha = 0.08;
         ctx.fillRect(P.x, Y(ref.value + ref.band), P.w, Y(ref.value - ref.band) - Y(ref.value + ref.band));
@@ -284,6 +297,31 @@ export class TimeChart extends EventTarget {
 
   // ---- interaction ----------------------------------------------------
 
+  /** Section edges; a boundary shared by two neighbours is one edge (the left one's end). */
+  _edges() {
+    const secs = this.data.sections || [], out = [];
+    secs.forEach((s, i) => {
+      if (!(i > 0 && Math.abs(secs[i - 1].end - s.start) < 0.05)) out.push({ i, side: 'start', t: s.start });
+      out.push({ i, side: 'end', t: s.end });
+    });
+    return out;
+  }
+
+  /** The section edge under the pointer, if it's on the section strip. */
+  _edgeAt(clientX, clientY, touch) {
+    if (!this.o.sectionEdit || !this._map || !this.data.sections?.length) return null;
+    const r = this.canvas.getBoundingClientRect();
+    const y = clientY - r.top, x = clientX - r.left;
+    if (y < PAD.top - 6 || y > PAD.top + STRIP_H + 6) return null;
+    const tol = touch ? 16 : 7;
+    let best = null;
+    for (const e of this._edges()) {
+      const d = Math.abs(this._map.X(e.t) - x);
+      if (d <= tol && (!best || d < best.d)) best = { ...e, d };
+    }
+    return best && { i: best.i, side: best.side };
+  }
+
   _bind() {
     const c = this.canvas;
     const pointers = new Map();
@@ -297,6 +335,13 @@ export class TimeChart extends EventTarget {
       c.setPointerCapture(e.pointerId);
       pointers.set(e.pointerId, e.clientX);
       moved = false;
+      const edge = pointers.size === 1 && this._edgeAt(e.clientX, e.clientY, e.pointerType !== 'mouse');
+      if (edge) {
+        this._edgeDrag = { edge, orig: this.data.sections };
+        drag = null;
+        this.draw();
+        return;
+      }
       if (pointers.size === 1) drag = { x: e.clientX, range: this._xRange() };
       if (pointers.size === 2) {
         const xs = [...pointers.values()];
@@ -306,6 +351,14 @@ export class TimeChart extends EventTarget {
     });
     c.addEventListener('pointermove', (e) => {
       if (pointers.has(e.pointerId)) pointers.set(e.pointerId, e.clientX);
+      if (this._edgeDrag) {
+        const t = this.o.sectionEdit.snap?.(tAt(e.clientX)) ?? tAt(e.clientX);
+        this.data.sections = moveEdge(this._edgeDrag.orig, this._edgeDrag.edge, t);
+        moved = true;
+        this.draw();
+        return;
+      }
+      if (e.pointerType === 'mouse' && !drag) c.style.cursor = this._edgeAt(e.clientX, e.clientY, false) ? 'ew-resize' : '';
       if (pinch && pointers.size === 2) {
         const xs = [...pointers.values()];
         const f = pinch.d / (Math.abs(xs[0] - xs[1]) || 1);
@@ -328,6 +381,13 @@ export class TimeChart extends EventTarget {
     });
     const end = (e) => {
       pointers.delete(e.pointerId);
+      if (this._edgeDrag) {
+        const changed = this.data.sections !== this._edgeDrag.orig;
+        this._edgeDrag = null;
+        this.draw();
+        if (changed) this.dispatchEvent(new CustomEvent('sections', { detail: this.data.sections }));
+        return;
+      }
       if (pointers.size < 2) pinch = null;
       if (pointers.size === 0) {
         if (drag && !moved) this.dispatchEvent(new CustomEvent('seek', { detail: Math.max(0, tAt(e.clientX)) }));

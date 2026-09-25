@@ -34,7 +34,9 @@ jobs:
       - name: Build site
         run: |
           mkdir -p _site
-          cp -r index.html css js _site/
+          cp -r index.html manifest.webmanifest sw.js css js icons _site/
+          # a new service-worker version per deploy, so installed apps pick up the update
+          sed -i "s/__BUILD__/${GITHUB_SHA::12}/" _site/sw.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

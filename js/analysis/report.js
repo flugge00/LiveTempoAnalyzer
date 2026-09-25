@@ -2,12 +2,21 @@
 // plain-language insights shown on the inspection page. Cheap; re-run whenever
 // the user changes time signature or bar offset.
 
-import { beatTempo, barsFromBeats, beatPositionProfile } from '../dsp/beats.js';
+import { beatTempo, beatPositionProfile } from '../dsp/beats.js';
+import { beatPositions, barsFromPositions } from '../dsp/downbeat.js';
 import { tempoSummary, within, median, mean } from '../dsp/stats.js';
 
-export function buildReport(analysis, { beatsPerBar = 4, barPhase = 0 } = {}) {
+/**
+ * @param {object} analysis analyzeAudio result
+ * @param {{beatsPerBar?:number, barPhase?:'auto'|number}} settings
+ * @param {object[]} [sectionList] sections to report on (default: the automatic ones)
+ */
+export function buildReport(analysis, { beatsPerBar = 4, barPhase = 'auto' } = {}, sectionList = analysis.sections) {
   const beatPts = beatTempo(analysis.beats);
-  const bars = barsFromBeats(analysis.beats, beatsPerBar, barPhase);
+  const autoBars = barPhase === 'auto' && !!analysis.accent;
+  const positions = beatPositions(analysis.beats, beatsPerBar, autoBars ? 'auto' : +barPhase || 0, analysis.accent);
+  const bars = barsFromPositions(analysis.beats, positions, beatsPerBar);
+  const downbeats = analysis.beats.filter((_, i) => positions.pos[i] === 0);
   const curvePts = analysis.curve.t.map((t, i) => ({ t, bpm: analysis.curve.bpm[i] }));
   const usable = beatPts.length > 16 ? beatPts : curvePts;
   const summary = tempoSummary(usable);
@@ -22,7 +31,7 @@ export function buildReport(analysis, { beatsPerBar = 4, barPhase = 0 } = {}) {
     };
   };
 
-  const sections = (analysis.sections || []).map((s) => {
+  const sections = (sectionList || []).map((s) => {
     const pts = within(beatPts, s.start, s.end);
     const src = pts.length >= 8 ? pts : within(curvePts, s.start, s.end);
     const sum = tempoSummary(src, { edgeSec: 5 });
@@ -30,7 +39,11 @@ export function buildReport(analysis, { beatsPerBar = 4, barPhase = 0 } = {}) {
   });
 
   const profile = beatPositionProfile(bars, beatsPerBar);
-  return { summary, beatPts, bars, profile, ...timing(beatPts), sections, insights: insights(summary, sections, profile) };
+  return {
+    summary, beatPts, bars, profile, ...timing(beatPts), sections,
+    positions, downbeats, autoBars,
+    insights: insights(summary, sections, profile),
+  };
 }
 
 /** Report for a live session that has no audio: only the live curve. */

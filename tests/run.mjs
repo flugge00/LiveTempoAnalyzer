@@ -1,7 +1,10 @@
 ﻿// Test runner for the DSP modules. Run with tests/run.ps1 (uses VS Code's bundled
 // Node) or with any Node >= 18: `node tests/run.mjs`.
 
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { crc32, makeZip, readZip } from '../js/store/zip.js';
+import { exportSessions, readSessionsFile, importSessions } from '../js/store/share.js';
+import { split, joinNext, moveEdge, canSplit, effectiveSections, colorIndexes } from '../js/analysis/sections.js';
 import { drumTrack, songWithSections } from '../js/analysis/demo-synth.js';
 import { onsetEnvelope } from '../js/dsp/onset.js';
 import { TempoModel, tempoCurve } from '../js/dsp/tempo.js';
@@ -39,9 +42,67 @@ function offlineCurve(samples, sr, opts = {}) {
 
 const median = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
 
+async function appTests() {
+  // zip + session sharing round trip
+  {
+    check('crc32 known value', crc32(new TextEncoder().encode('123456789')) === 0xcbf43926);
+    const zip = await makeZip([{ name: 'a/ü.txt', data: 'hello' }, { name: 'b.bin', data: new Uint8Array([1, 2, 3]) }]);
+    const entries = await readZip(zip);
+    const ok = entries.length === 2 && entries[0].name === 'a/ü.txt' && (await entries[0].text()) === 'hello'
+      && new Uint8Array(await (await entries[1].blob()).arrayBuffer()).join() === '1,2,3';
+    check('zip round trip', ok, entries.map((e) => e.name).join(', '));
+
+    const audio = new Blob([new Uint8Array(5000).map((_, i) => i % 251)], { type: 'audio/webm;codecs=opus' });
+    const s1 = { id: 'abc', name: 'Memories / take 2', created: 1000, modified: 2000, kind: 'live', duration: 60, live: { points: [{ t: 1, bpm: 120, c: 1 }], markers: [] }, settings: { beatsPerBar: 4, barPhase: 'auto' }, sections: [{ start: 0, end: 30, label: 'A', name: 'Verse' }], audio };
+    const s2 = { id: 'def', name: 'No audio', created: 1500, kind: 'file', analysis: { beats: [], curve: { t: [], bpm: [] } }, settings: {} };
+    const back = await readSessionsFile(await exportSessions([s1, s2]));
+    const r1 = back.find((s) => s.id === 'abc');
+    const sameAudio = r1?.audio && (await r1.audio.arrayBuffer()).byteLength === 5000 && r1.audio.type.startsWith('audio/webm');
+    check('session export/import keeps data and audio', back.length === 2 && r1.name === s1.name && r1.sections[0].name === 'Verse' && sameAudio && !back.find((s) => s.id === 'def').audio);
+
+    const store = new Map([['abc', { ...s1, modified: 5000, name: 'edited here' }]]);
+    const db = { getSession: async (id) => store.get(id), saveSession: async (s) => { store.set(s.id, s); return s; } };
+    const res = await importSessions(back, db);
+    check('import keeps the newer copy', res.added === 1 && res.unchanged === 1 && store.get('abc').name === 'edited here', JSON.stringify(res));
+    let bad = null;
+    try { await readSessionsFile(new Blob(['{"hello": 1}'])); } catch (e) { bad = e; }
+    check('import rejects foreign files', !!bad, bad?.message);
+  }
+
+  // section editing
+  {
+    const list = [{ start: 0, end: 20, name: 'Intro' }, { start: 20, end: 50, name: 'Verse' }, { start: 50, end: 80, name: 'Chorus' }];
+    const sp = split(list, 35);
+    const jn = joinNext(sp, 1);
+    const mv = moveEdge(list, { i: 0, side: 'end' }, 25);
+    const clamp = moveEdge(list, { i: 0, side: 'end' }, 60);
+    check('split / join / move sections',
+      sp.length === 4 && sp[1].end === 35 && sp[2].start === 35 && sp[2].name === 'Verse'
+      && jn.length === 3 && jn[1].end === 50
+      && mv[0].end === 25 && mv[1].start === 25
+      && clamp[0].end === 48.5 && clamp[1].start === 48.5 && !canSplit(list, 20.5),
+      `clamped to ${clamp[0].end}`);
+    const legacy = effectiveSections({ analysis: { sections: [{ start: 0, end: 10, label: 'A', name: 'Intro' }, { start: 10, end: 20, label: 'B', name: 'Part B' }] }, sectionNames: { 1: 'Chorus 1' } });
+    const colors = colorIndexes([{ name: 'Verse' }, { name: 'Chorus 1' }, { name: 'Verse 2' }, { name: 'chorus' }]);
+    check('older renames and colour groups', legacy[1].name === 'Chorus 1' && colors.join() === '0,1,0,1', colors.join());
+  }
+
+  // the service worker must cache every app file, and only files that exist
+  {
+    const root = new URL('../', import.meta.url);
+    const sw = readFileSync(new URL('sw.js', root), 'utf8');
+    const listed = new Set([...sw.matchAll(/^\s+'([^']+)',?$/gm)].map((m) => m[1]));
+    const walk = (dir) => readdirSync(new URL(dir, root)).flatMap((f) => (statSync(new URL(dir + f, root)).isDirectory() ? walk(`${dir}${f}/`) : [dir + f]));
+    const missing = walk('js/').filter((f) => !listed.has(f));
+    const absent = [...listed].filter((f) => f !== './' && !existsSync(new URL(f, root)));
+    check('service worker caches every app file', !missing.length && !absent.length, [...missing.map((f) => 'not cached: ' + f), ...absent.map((f) => 'no such file: ' + f)].join(', '));
+  }
+}
+
 async function main() {
   const sr = 44100;
   const t0 = Date.now();
+  await appTests();
 
   // 1. constant 120 BPM
   {
@@ -158,11 +219,17 @@ async function main() {
   // 9. half-time feel sections must not flip the tempo to half (the "Memories" problem)
   {
     const half = (t) => (t > 25 && t < 45) || (t > 70 && t < 90);
-    const { samples } = drumTrack({ sr, duration: 110, bpm: 128, eighths: true, halfTime: half, seed: 21 });
+    const { samples, beats: truth } = drumTrack({ sr, duration: 110, bpm: 128, eighths: true, halfTime: half, seed: 21 });
     const a = analyzeAudio(samples, sr, { sections: false });
     const wrong = a.curve.bpm.filter((b) => b != null && Math.abs(b - 128) > 3).length;
     const n = a.curve.bpm.filter((b) => b != null).length;
     check('offline: half-time sections keep full tempo', wrong === 0, `${wrong}/${n} readings off by >3 BPM`);
+    // the backbeat (snare on 2 and 4) must keep the bar count on the right beats
+    // even through the half-time parts, where the snare moves to 3
+    const down = buildReport(a, { beatsPerBar: 4, barPhase: 'auto' }).downbeats;
+    const nearestIdx = (t) => truth.reduce((b, x, i) => (Math.abs(x - t) < Math.abs(truth[b] - t) ? i : b), 0);
+    const onOne = down.filter((t) => nearestIdx(t) % 4 === 0).length;
+    check('downbeats stay on the 1 through half-time parts', onOne / down.length > 0.9, `${onOne}/${down.length} on beat 1`);
     const live = liveEstimate(samples, sr);
     const lwrong = live.filter((r) => r.bpm != null && r.t > 8 && Math.abs(r.bpm - 128) > 3).length;
     check('live: half-time sections keep full tempo', lwrong === 0, `${lwrong}/${live.length} readings off by >3 BPM`);
@@ -179,6 +246,23 @@ async function main() {
     const live = liveEstimate(samples, sr);
     const lafter = live.filter((p) => p.t > 52 && p.t < 68 && p.bpm != null);
     check('live follows 100 → 140 BPM change', lafter.length > 40 && lafter.every((p) => Math.abs(p.bpm - 140) < 2), `after ${lafter.length ? median(lafter.map((p) => p.bpm)).toFixed(1) : 'none'} (${lafter.length} pts)`);
+  }
+
+  // 11. downbeats: song starts with a 2-beat pickup, chords change every bar,
+  //     and one odd 2/4 bar in the middle shifts the count
+  {
+    const C = [261.6, 329.6, 392], F = [349.2, 440, 523.3], Am = [220, 261.6, 329.6], G = [196, 246.9, 293.7];
+    const prog = [C, F, Am, G];
+    const bars = (n, from = 0) => Array.from({ length: n }, (_, k) => ({ chord: prog[(k + from) % 4], beats: 4, gain: 0.07 }));
+    const parts = [{ chord: G, beats: 2, gain: 0.07 }, ...bars(14), { chord: G, beats: 2, gain: 0.07 }, ...bars(14, 1)];
+    const { samples, boundaries } = songWithSections({ sr, bpm: 112, parts, jitterMs: 5 });
+    const a = analyzeAudio(samples, sr, { sections: false });
+    const truth = boundaries.filter((_, i) => parts[i].beats === 4);
+    const rep = buildReport(a, { beatsPerBar: 4, barPhase: 'auto' });
+    const found = rep.downbeats;
+    const hit = truth.filter((t) => found.some((f) => Math.abs(f - t) < 0.06)).length;
+    const wrong = found.filter((f) => !truth.some((t) => Math.abs(f - t) < 0.06)).length;
+    check('downbeats found automatically', hit / truth.length > 0.85 && wrong <= 3, `${hit}/${truth.length} true downbeats, ${wrong} wrong`);
   }
 
   print(`\n${failures ? failures + ' FAILED' : 'all passed'} in ${((Date.now() - t0) / 1000).toFixed(1)} s`);

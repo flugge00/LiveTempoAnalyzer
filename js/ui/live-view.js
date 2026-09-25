@@ -1,6 +1,7 @@
 // Live tab: start/stop, big BPM readout, drift tiles and the moving graph.
 
 import { LiveEngine, listInputs } from '../audio/live.js';
+import { countIn } from '../audio/count-in.js';
 import { TimeChart } from './chart.js';
 import { $, esc, toast, fmtBpm, fmtSigned, fmtDuration, driftStatus, statusBadge, prefs } from './dom.js';
 import { median, sd, slope } from '../dsp/stats.js';
@@ -10,12 +11,15 @@ export function initLive() {
   const engine = new LiveEngine();
   const chart = new TimeChart($('liveChart'), { follow: { windowSec: 120 } });
   let points = [], markers = [], timer = null, t0Wall = 0, lastLevel = -120, meterRaf = null;
+  let startFrom = 0; // start tempo is measured from here (after a count-in)
+  let counting = null;
   const series = [{ id: 'live', name: 'Tempo', color: '--line-main', points, endDot: true, gapSec: 1.1 }];
 
   // ---- settings ------------------------------------------------------
   const S = {
     target: $('setTarget'), tol: $('setTol'), win: $('setWindow'), gate: $('setGate'),
     device: $('setDevice'), record: $('setRecord'), view: $('liveWindow'),
+    bpb: $('setBpb'), countMode: $('setCountMode'), countBars: $('setCountBars'),
   };
   S.target.value = prefs.get('target', '') || '';
   S.tol.value = prefs.get('tol', '2');
@@ -23,13 +27,17 @@ export function initLive() {
   S.gate.value = prefs.get('gate', -50);
   S.record.checked = prefs.get('record', true);
   S.view.value = prefs.get('view', '120');
+  S.bpb.value = prefs.get('bpb', '4');
+  S.countMode.value = prefs.get('countMode', 'both');
+  S.countBars.value = prefs.get('countBars', '2');
   $('setGateVal').textContent = S.gate.value;
 
   const target = () => parseFloat(S.target.value) || null;
   const persist = () => {
     prefs.set('target', S.target.value); prefs.set('tol', S.tol.value); prefs.set('window', S.win.value);
     prefs.set('gate', +S.gate.value); prefs.set('record', S.record.checked); prefs.set('view', S.view.value);
-    prefs.set('device', S.device.value);
+    prefs.set('device', S.device.value); prefs.set('bpb', S.bpb.value);
+    prefs.set('countMode', S.countMode.value); prefs.set('countBars', S.countBars.value);
   };
   for (const el of Object.values(S)) el.addEventListener('change', () => { persist(); applyReference(); });
   S.gate.addEventListener('input', () => { $('setGateVal').textContent = S.gate.value; engine.gateDb = +S.gate.value; });
@@ -63,15 +71,17 @@ export function initLive() {
 
   // ---- start / stop --------------------------------------------------
   const btn = $('liveStart');
-  btn.onclick = async () => {
-    if (engine.running) return stop();
+  btn.onclick = () => (engine.running ? stop() : start());
+
+  /** @returns {Promise<boolean>} whether the microphone is running */
+  async function start() {
     if (!navigator.mediaDevices?.getUserMedia) {
       toast('Microphone access needs a secure (https) page and a modern browser.');
-      return;
+      return false;
     }
     btn.disabled = true;
     try {
-      points.length = 0; markers = [];
+      points.length = 0; markers = []; startFrom = 0;
       chart.setData({ series, markers, duration: 0 });
       applyReference(); applyView();
       await engine.start({
@@ -83,13 +93,58 @@ export function initLive() {
       });
       refreshDevices(); // labels become available after permission
       requestPersistence();
+      return true;
     } catch (err) {
       console.error(err);
       toast(err?.name === 'NotAllowedError' ? 'Microphone permission was denied. Allow it in the browser settings and try again.' : `Could not start the microphone: ${err?.message || err}`, 6000);
+      return false;
     } finally {
       btn.disabled = false;
     }
+  }
+
+  // ---- count-in -------------------------------------------------------
+  const overlay = $('countOverlay');
+  $('liveCount').onclick = async () => {
+    if (counting) { counting.stop(); return; }
+    const bpm = target();
+    if (!bpm) {
+      toast('Set a target tempo first (Settings, below the chart).', 4000);
+      document.querySelector('#view-live details.settings').open = true;
+      S.target.focus();
+      return;
+    }
+    if (!engine.running && !(await start())) return;
+    const mode = S.countMode.value, bpb = +S.bpb.value;
+    const at = engine.pipeline?.time ?? 0;
+    overlay.hidden = false;
+    overlay.classList.toggle('flash', mode !== 'click');
+    $('countSub').textContent = `${bpm} BPM`;
+    $('liveCount').textContent = 'Stop count-in';
+    counting = countIn({
+      bpm, beatsPerBar: bpb, bars: +S.countBars.value,
+      click: mode !== 'flash', ctx: engine.ctx,
+      onBeat: (beat) => {
+        $('countNum').textContent = beat + 1;
+        overlay.classList.toggle('one', beat === 0);
+        overlay.classList.remove('beat');
+        void overlay.offsetWidth; // restart the flash animation
+        overlay.classList.add('beat');
+      },
+      onDone: () => {
+        counting = null;
+        overlay.hidden = true;
+        overlay.classList.remove('beat', 'one');
+        $('countNum').textContent = '';
+        $('liveCount').textContent = 'Count in';
+      },
+    });
+    // readings that still hear the click don't count towards the band's start tempo
+    startFrom = at + counting.endsIn + +S.win.value / 2;
+    markers.push({ t: at + counting.endsIn, label: 'Count-in' });
+    chart.setData({ markers });
   };
+  overlay.addEventListener('click', () => counting?.stop());
 
   engine.addEventListener('state', (e) => {
     const on = e.detail.running;
@@ -145,9 +200,10 @@ export function initLive() {
     const now = median(valid.slice(-4).map((p) => p.v));
     $('liveBpm').textContent = last.v == null ? '–' : fmtBpm(now);
 
-    const tFirst = valid[0].t, tNow = last.t;
+    const band = valid.filter((p) => p.t >= startFrom);
+    const tFirst = band[0]?.t ?? Infinity, tNow = last.t;
     const haveStart = tNow - tFirst >= 15;
-    const start = haveStart ? median(valid.filter((p) => p.t <= tFirst + 15).map((p) => p.v)) : null;
+    const start = haveStart ? median(band.filter((p) => p.t <= tFirst + 15).map((p) => p.v)) : null;
     $('tStart').textContent = haveStart ? fmtBpm(start) : '…';
 
     const tg = target();
@@ -195,6 +251,7 @@ export function initLive() {
 
   async function stop() {
     btn.disabled = true;
+    counting?.stop();
     try {
       const blob = await engine.stop();
       const valid = points.filter((p) => p.v != null);
@@ -207,7 +264,7 @@ export function initLive() {
         kind: 'live',
         duration: points.length ? points[points.length - 1].t : 0,
         live: { points: points.map((p) => ({ t: +p.t.toFixed(2), bpm: p.v == null ? null : +p.v.toFixed(2), c: +(p.c || 0).toFixed(2) })), markers },
-        settings: { beatsPerBar: 4, barPhase: 0, targetBpm: target() },
+        settings: { beatsPerBar: +S.bpb.value, barPhase: 'auto', targetBpm: target() },
         audio: blob || null,
       };
       try {

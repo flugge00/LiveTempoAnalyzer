@@ -1,0 +1,16 @@
+{
+  "name": "Live Tempo Analyzer",
+  "short_name": "Tempo",
+  "description": "See whether your band drifts: live tempo tracking from the microphone, plus detailed analysis of rehearsal recordings.",
+  "id": "./",
+  "start_url": "./#/live",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d0d0d",
+  "theme_color": "#0d0d0d",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

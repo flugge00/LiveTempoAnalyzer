@@ -7,6 +7,12 @@
   <meta name="description" content="See whether your band drifts: live tempo tracking from the microphone, plus detailed after-the-fact analysis of recordings.">
   <title>Live Tempo Analyzer</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231a1a19'/%3E%3Cpath d='M5 21 L10 14 L15 18 L20 10 L27 13' fill='none' stroke='%233987e5' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Tempo">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -37,6 +43,7 @@
 
       <div class="controls">
         <button id="liveStart" class="btn btn-record" type="button"><span class="dot" aria-hidden="true"></span><span class="label">Start</span></button>
+        <button id="liveCount" class="btn" type="button" title="Count the band in at the target tempo (starts recording if needed)">Count in</button>
         <button id="liveMark" class="btn" type="button" disabled title="Drop a marker at this moment (M)">Mark</button>
         <div class="seg" role="group" aria-label="Tempo octave">
           <button id="liveHalf" class="btn" type="button" disabled title="Reading is double the real tempo">÷2</button>
@@ -65,6 +72,7 @@
       </div>
 
       <div id="liveSaved" class="card notice" hidden></div>
+      <div id="countOverlay" class="count-overlay" hidden aria-live="assertive"><span id="countNum"></span><span id="countSub" class="count-sub"></span></div>
 
       <details class="card settings">
         <summary>Settings</summary>
@@ -75,6 +83,17 @@
           </label>
           <label>Tolerance band
             <select id="setTol"><option value="1">± 1%</option><option value="2" selected>± 2%</option><option value="3">± 3%</option><option value="5">± 5%</option></select>
+          </label>
+          <label>Beats per bar
+            <select id="setBpb"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option><option>7</option></select>
+            <small>For the count-in and the bars in the analysis afterwards.</small>
+          </label>
+          <label>Count-in
+            <span class="inline-fields">
+              <select id="setCountMode" aria-label="Count-in signal"><option value="both">Click + flash</option><option value="click">Click only</option><option value="flash">Flash only</option></select>
+              <select id="setCountBars" aria-label="Count-in length"><option value="1">1 bar</option><option value="2" selected>2 bars</option></select>
+            </span>
+            <small>Plays at the target tempo, then stops, so the microphone hears only the band. Use flash only if the click would bother anyone.</small>
           </label>
           <label>Analysis window
             <select id="setWindow"><option value="4">4 s (fast, jumpier)</option><option value="6">6 s</option><option value="8" selected>8 s (default)</option><option value="12">12 s (smooth, slower)</option></select>
@@ -98,15 +117,15 @@
     <section id="view-analyze" class="view" hidden>
       <div id="dropZone" class="card drop">
         <p class="drop-title">Drop a recording here</p>
-        <p>mp3, wav, m4a, ogg, webm… or</p>
-        <label class="btn btn-primary">Choose audio file<input id="fileInput" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm" hidden></label>
+        <p>mp3, wav, m4a, ogg, webm… or a shared session (.zip)</p>
+        <label class="btn btn-primary">Choose file<input id="fileInput" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm,.zip,.json" hidden></label>
         <label class="inline">Expected tempo (optional) <input id="fileHint" type="number" min="30" max="300" step="1" placeholder="auto" inputmode="numeric"></label>
         <p class="muted small">Everything runs in your browser. The file is never uploaded anywhere.</p>
         <button id="demoBtn" class="btn btn-small" type="button">No recording at hand? Try a demo</button>
       </div>
 
       <div id="progress" class="card progress" hidden>
-        <div class="progress-bar"><div id="progressFill"></div></div>
+        <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
         <div id="progressText" class="muted">Working…</div>
       </div>
 
@@ -122,6 +141,7 @@
           <div class="toolbar">
             <button id="resPlay" class="btn" type="button" hidden>▶ Play</button>
             <span id="resTime" class="timer small"></span>
+            <span id="resBeat" class="beat-counter" title="Beat in the bar" hidden></span>
             <span class="sep"></span>
             <label>Beats per bar <select id="resBpb"></select></label>
             <label>Bar starts on beat <select id="resPhase"></select></label>
@@ -138,14 +158,22 @@
           </div>
           <div class="legend" id="resLegend"></div>
           <div id="resChart" class="chart-box tall"></div>
-          <p class="muted small hint">Drag to pan, scroll or pinch to zoom, double-click to fit. Click to play from that point.</p>
+          <p class="muted small hint">Drag to pan, scroll or pinch to zoom, double-click to fit. Click to play from that point. Drag the handles on the coloured strip to move a section boundary.</p>
         </div>
 
         <div class="grid-2">
           <div class="card" id="secCard">
-            <h3>Song sections</h3>
-            <p class="muted small">Detected automatically from repeating harmony and sound. Names are guesses; click a name to rename it.</p>
+            <div class="card-head">
+              <h3>Song sections</h3>
+              <div class="sec-tools">
+                <button id="secSplit" class="btn btn-small" type="button" disabled>Split at playhead</button>
+                <button id="secJoin" class="btn btn-small" type="button" disabled>Join with next</button>
+                <button id="secReset" class="btn btn-small" type="button" hidden>Reset to automatic</button>
+              </div>
+            </div>
+            <p class="muted small">Found automatically from repeating harmony and sound. Names are guesses: type over a name to fix it. To split a section, click the chart where the new part starts. To join one with the next, click its row.</p>
             <div class="table-wrap"><table id="secTable" class="data"></table></div>
+            <datalist id="secNameList"></datalist>
           </div>
           <div class="card" id="profileCard">
             <h3>Timing inside the bar</h3>
@@ -160,6 +188,7 @@
           <dl class="explain">
             <dt>Tempo curve</dt><dd>Tempo measured over a sliding 8-second window. Smooth, and good for spotting drift over minutes.</dd>
             <dt>Per-bar tempo</dt><dd>Tempo computed from the duration of each bar, based on detected beats. More detailed but noisier.</dd>
+            <dt>Bars and the "1"</dt><dd>With <em>Bar starts on beat: Auto</em>, the first beat of each bar is found from chord changes, the kick drum and the snare backbeat. Press Play and watch the beat counter next to the time. If the "1" is off, choose the right beat by hand.</dd>
             <dt>Drift</dt><dd>End tempo minus start tempo (medians of the first and last 15 seconds).</dd>
             <dt>Steadiness (±)</dt><dd>Standard deviation of the tempo. Lower is steadier.</dd>
             <dt>Timing jitter</dt><dd>How far individual beats land from a smooth local grid (RMS, ms). Around 5–10 ms is tight; above 20 ms is loose.</dd>
@@ -168,8 +197,8 @@
         </details>
 
         <div class="actions">
+          <button id="resExport" class="btn" type="button" title="One .zip with the recording and the analysis. Import it on another device (Sessions → Import).">Export for sharing</button>
           <button id="resExportCsv" class="btn" type="button">Export CSV</button>
-          <button id="resExportJson" class="btn" type="button">Export JSON</button>
           <button id="resNew" class="btn" type="button">Analyze another file</button>
         </div>
         <audio id="resAudio" preload="auto" hidden></audio>
@@ -178,15 +207,62 @@
 
     <!-- SESSIONS ---------------------------------------------------------->
     <section id="view-sessions" class="view" hidden>
-      <div class="card">
-        <h2>Sessions</h2>
-        <p class="muted small">Stored in this browser on this device.</p>
+      <div class="card" id="sessCard">
+        <div class="card-head">
+          <div>
+            <h2>Sessions</h2>
+            <p class="muted small">Stored in this browser on this device. Export sessions to share them with the band, and import the files they send you.</p>
+          </div>
+          <div class="sec-tools">
+            <button id="sessCompare" class="btn btn-primary" type="button" disabled>Compare</button>
+            <button id="sessExport" class="btn" type="button" disabled>Export selected</button>
+            <label class="btn">Import…<input id="importInput" type="file" accept=".zip,.json,application/zip,application/json" multiple hidden></label>
+          </div>
+        </div>
+        <p id="sessSelHint" class="muted small">Tick two or more takes of the same song to compare them.</p>
         <div class="table-wrap"><table id="sessTable" class="data"></table></div>
-        <p id="sessEmpty" class="muted" hidden>No sessions yet. Record one on the Live tab or analyze a file.</p>
+        <p id="sessEmpty" class="muted" hidden>No sessions yet. Record one on the Live tab, analyze a file, or import a session someone shared.</p>
+      </div>
+    </section>
+
+    <!-- COMPARE ----------------------------------------------------------->
+    <section id="view-compare" class="view" hidden>
+      <div class="result-head">
+        <h2 id="cmpTitle">Compare takes</h2>
+        <a class="btn btn-small" href="#/sessions">← Sessions</a>
+      </div>
+      <div id="cmpProgress" class="card progress" hidden>
+        <div class="progress-bar"><div id="cmpProgressFill" class="progress-fill"></div></div>
+        <div id="cmpProgressText" class="muted">Working…</div>
+      </div>
+      <div id="cmpResult" hidden>
+        <ul id="cmpInsights" class="insights"></ul>
+        <div class="card chart-card">
+          <div class="toolbar">
+            <div class="seg" role="group" aria-label="Show">
+              <button id="cmpAbs" class="btn btn-small" type="button" aria-pressed="true">Tempo</button>
+              <button id="cmpRel" class="btn btn-small" type="button" aria-pressed="false">Change from start</button>
+            </div>
+            <span class="sep"></span>
+            <button id="cmpFit" class="btn btn-small" type="button">Fit</button>
+          </div>
+          <div class="legend" id="cmpLegend"></div>
+          <div id="cmpChart" class="chart-box tall"></div>
+          <p class="muted small hint">Every take is lined up so that 0:00 is where the band starts playing. Click a name above the chart to hide or show that take.</p>
+        </div>
+        <div class="card">
+          <h3>Take by take</h3>
+          <p class="muted small">Oldest first. Steadiness and jitter going down means the band is getting tighter.</p>
+          <div class="table-wrap"><table id="cmpTable" class="data"></table></div>
+        </div>
       </div>
     </section>
   </main>
 
+  <div id="updateNotice" class="update-notice" role="status" hidden>
+    <span>A new version of the app is ready.</span>
+    <button id="updateReload" class="btn btn-small btn-primary" type="button">Reload</button>
+  </div>
   <div id="toast" class="toast" role="status" hidden></div>
   <script type="module" src="js/main.js"></script>
 </body>

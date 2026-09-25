@@ -4,9 +4,11 @@
 //   id, name, created (ms), kind: 'live' | 'file', duration,
 //   live?: { points: [{t, bpm, c}], markers: [{t, label}] },
 //   analysis?: <analyzeAudio result>,
-//   settings: { beatsPerBar, barPhase, expectedBpm },
-//   sectionNames?: { [index]: string },      // user renames
+//   settings: { beatsPerBar, barPhase: 'auto' | number, targetBpm },
+//   sections?: [{start, end, label, name, take}],  // user-edited sections (replace analysis.sections)
+//   sectionNames?: { [index]: string },      // older sessions: renames of the automatic sections
 //   audio?: Blob, fileName?: string,
+//   modified: ms,                            // last change; decides which copy wins on import
 // }
 
 const DB = 'live-tempo-analyzer', STORE = 'sessions', VERSION = 1;
@@ -36,7 +38,11 @@ async function tx(mode, fn) {
   });
 }
 
-export const saveSession = (s) => tx('readwrite', (st) => st.put(s)).then(() => s);
+/** Stores a session and stamps `modified` (imports keep the sender's stamp). */
+export function saveSession(s, { keepModified = false } = {}) {
+  if (!keepModified || s.modified == null) s.modified = Date.now();
+  return tx('readwrite', (st) => st.put(s)).then(() => s);
+}
 export const getSession = (id) => tx('readonly', (st) => st.get(id));
 export const deleteSession = (id) => tx('readwrite', (st) => st.delete(id));
 

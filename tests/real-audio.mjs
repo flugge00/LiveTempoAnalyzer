@@ -9,6 +9,8 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { analyzeAudio } from '../js/analysis/analyze.js';
 import { buildReport } from '../js/analysis/report.js';
 import { LiveTempo } from '../js/analysis/live-tempo.js';
+import { cueScores, downbeatEvidence } from '../js/dsp/downbeat.js';
+import { beatRuns } from '../js/dsp/beats.js';
 
 const cache = new URL('../test_audio/.cache/', import.meta.url);
 const files = existsSync(cache) ? readdirSync(cache).filter((f) => f.endsWith('.f32')) : [];
@@ -39,5 +41,19 @@ for (const f of files) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${f}: median ${med.toFixed(1)} BPM, range ${Math.min(...vals).toFixed(1)}–${Math.max(...vals).toFixed(1)}; ` +
     `octave errors offline ${off}/${vals.length}, live ${liveOff}/${live.filter((p) => p.bpm != null).length}, bars ${barsOff}/${rep.bars.length}`);
   console.log(`      ${rep.insights.join(' | ')}`);
+
+  // Downbeats (no ground truth here): how clearly one phase wins, and how often the count shifts.
+  const z = cueScores(a.accent);
+  const idx = new Map(a.beats.map((t, i) => [t, i]));
+  for (const [ri, r] of beatRuns(a.beats).entries()) {
+    if (r.length < 32) continue;
+    const ids = r.map((t) => idx.get(t));
+    const ev = downbeatEvidence(z, ids, 4);
+    const byPhase = [0, 1, 2, 3].map((p) => ev.filter((_, k) => k % 4 === p).reduce((s, v) => s + v, 0) / (ids.length / 4));
+    const pos = ids.map((i) => rep.positions.pos[i]);
+    const jumps = pos.filter((p, k) => k && p !== (pos[k - 1] + 1) % 4).length;
+    console.log(`      run ${ri + 1} (${r.length} beats from ${r[0].toFixed(1)} s): mean accent per phase ${byPhase.map((v) => v.toFixed(2)).join(' / ')}, count shifts ${jumps}`);
+  }
+  console.log(`      sections: ${a.sections.map((s) => `${s.name}@${s.start.toFixed(0)}`).join(', ')}`);
 }
 process.exitCode = failures ? 1 : 0;

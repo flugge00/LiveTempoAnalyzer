@@ -1,26 +1,37 @@
-﻿// Analyze tab + session inspection: file upload, progress, report, chart,
-// sections table, bar-timing profile, playback synced to the chart.
+// Analyze tab + session inspection: file upload, progress, report, chart,
+// editable sections table, bar-timing profile, playback synced to the chart.
 
 import { analyzeBlob } from '../analysis/client.js';
+import { ANALYSIS_VERSION } from '../analysis/analyze.js';
 import { buildReport, liveReport, fmtTime } from '../analysis/report.js';
+import { effectiveSections, editable, snapToBeat, sectionAt, canSplit, split, joinNext, colorIndexes, SECTION_NAMES } from '../analysis/sections.js';
 import { TimeChart } from './chart.js';
 import { $, esc, toast, download, fmtBpm, fmtSigned, fmtMs, fmtDuration, driftStatus, statusBadge, legend } from './dom.js';
 import { saveSession, getSession, newId, requestPersistence } from '../store/db.js';
+import { exportSessions, safeFileName } from '../store/share.js';
 
-export function initAnalyze() {
-  const chart = new TimeChart($('resChart'), { wheelZoom: true });
+export function initAnalyze({ onImportFile } = {}) {
+  const chart = new TimeChart($('resChart'), {
+    wheelZoom: true,
+    sectionEdit: { snap: (t) => snapToBeat(session?.analysis?.beats, t) },
+  });
   const audio = $('resAudio');
   let session = null, report = null, series = [], audioUrl = null, busy = false;
+  let cursor = null; // playhead / edit position (s), also without audio
 
   // ---- file input / drag & drop ---------------------------------------
   const drop = $('dropZone');
+  const isSessionFile = (f) => /\.(zip|json)$/i.test(f.name) || /zip|json/.test(f.type);
   $('fileInput').addEventListener('change', (e) => e.target.files[0] && openFile(e.target.files[0]));
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
   drop.addEventListener('dragleave', () => drop.classList.remove('over'));
   drop.addEventListener('drop', (e) => {
     e.preventDefault();
     drop.classList.remove('over');
-    const f = [...(e.dataTransfer?.files || [])].find((x) => x.type.startsWith('audio/') || /\.(mp3|wav|m4a|aac|ogg|flac|webm)$/i.test(x.name));
+    const files = [...(e.dataTransfer?.files || [])];
+    const shared = files.find(isSessionFile);
+    if (shared && onImportFile) { onImportFile(shared); return; }
+    const f = files.find((x) => x.type.startsWith('audio/') || /\.(mp3|wav|m4a|aac|ogg|flac|webm)$/i.test(x.name));
     if (f) openFile(f); else toast('That does not look like an audio file.');
   });
   $('resNew').onclick = () => { location.hash = '#/analyze'; };
@@ -49,6 +60,7 @@ export function initAnalyze() {
 
   async function openFile(file) {
     if (busy) return;
+    if (isSessionFile(file) && onImportFile) { onImportFile(file); return; }
     $('result').hidden = true;
     drop.hidden = true;
     try {
@@ -62,7 +74,7 @@ export function initAnalyze() {
         kind: 'file',
         duration: analysis.duration,
         analysis,
-        settings: { beatsPerBar: 4, barPhase: 0, targetBpm: null },
+        settings: { beatsPerBar: 4, barPhase: 'auto', targetBpm: null },
         audio: file,
         fileName: file.name,
       };
@@ -83,13 +95,17 @@ export function initAnalyze() {
     const s = await getSession(id);
     if (!s) { toast('Session not found.'); location.hash = '#/sessions'; return; }
     session = s;
-    if (s.audio && !s.analysis) {
+    const outdated = s.analysis && (s.analysis.version || 1) < ANALYSIS_VERSION;
+    if (s.audio && (!s.analysis || outdated)) {
       try {
-        s.analysis = await runAnalysis(s.audio, { expectedBpm: s.settings?.targetBpm || undefined });
+        if (outdated) showProgress('Updating the analysis to the latest version', 0);
+        s.analysis = await runAnalysis(s.audio, { expectedBpm: s.analysis?.options?.expectedBpm || s.settings?.targetBpm || undefined });
+        // the old default was "bar starts on beat 1"; downbeats are found automatically now
+        if (outdated && s.settings && !s.settings.barPhase) s.settings.barPhase = 'auto';
         await saveSession(s);
       } catch (err) {
         console.error(err);
-        toast(`Detailed analysis failed: ${err.message}. Showing the live readings only.`, 6000);
+        toast(`Detailed analysis failed: ${err.message}. ${s.analysis ? 'Showing the previous analysis.' : 'Showing the live readings only.'}`, 6000);
       }
     }
     render();
@@ -106,7 +122,7 @@ export function initAnalyze() {
 
   // ---- rendering ------------------------------------------------------
   function render() {
-    const s = session, a = s.analysis, st = s.settings || (s.settings = { beatsPerBar: 4, barPhase: 0 });
+    const s = session, a = s.analysis, st = s.settings || (s.settings = { beatsPerBar: 4, barPhase: 'auto' });
     drop.hidden = true;
     $('result').hidden = false;
     $('resTitle').value = s.name;
@@ -117,7 +133,7 @@ export function initAnalyze() {
     ].join(' · ');
 
     const livePts = (s.live?.points || []).map((p) => ({ t: p.t, bpm: p.bpm }));
-    report = a ? buildReport(a, st) : liveReport(livePts);
+    report = a ? buildReport(a, st, effectiveSections(s)) : liveReport(livePts);
     const sum = report.summary;
 
     $('insights').innerHTML = report.insights.map((i) => `<li>${esc(i)}</li>`).join('');
@@ -151,7 +167,7 @@ export function initAnalyze() {
       : sum ? { value: sum.start, band: sum.start * 0.02, label: `Start ${sum.start.toFixed(1)} ±2%` } : null;
     chart.setData({
       series,
-      sections: report.sections?.map((x, i) => ({ ...x, name: sectionName(i), colorIndex: x.label.charCodeAt(0) - 65 })) || [],
+      sections: chartSections(),
       markers: s.live?.markers || [],
       reference,
       levels: a?.levels || null,
@@ -165,8 +181,10 @@ export function initAnalyze() {
     const bpbSel = $('resBpb'), phSel = $('resPhase');
     bpbSel.innerHTML = [2, 3, 4, 5, 6, 7, 8].map((n) => `<option value="${n}">${n}</option>`).join('');
     bpbSel.value = st.beatsPerBar;
-    phSel.innerHTML = Array.from({ length: st.beatsPerBar }, (_, i) => `<option value="${i}">${i + 1}</option>`).join('');
-    phSel.value = st.barPhase;
+    phSel.innerHTML = (a?.accent ? '<option value="auto">Auto</option>' : '') +
+      Array.from({ length: st.beatsPerBar }, (_, i) => `<option value="${i}">${i + 1}</option>`).join('');
+    phSel.value = report.autoBars ? 'auto' : String(st.barPhase === 'auto' ? 0 : st.barPhase);
+    phSel.title = report.autoBars ? 'The "1" of each bar is found automatically. Play the recording to check the beat counter.' : '';
     bpbSel.disabled = phSel.disabled = !a;
 
     renderSections();
@@ -174,21 +192,43 @@ export function initAnalyze() {
     setupAudio();
   }
 
-  function sectionName(i) {
-    return session.sectionNames?.[i] ?? report.sections[i].name;
+  function chartSections() {
+    const list = report.sections || [];
+    const colors = colorIndexes(list);
+    return list.map((x, i) => ({ ...x, colorIndex: colors[i] }));
   }
+
+  // ---- sections: table, rename, split / join / drag -----------------------
+  async function saveSections(list, { rerender = true } = {}) {
+    session.sections = list.map(({ start, end, label, name, take }) => ({ start, end, label, name, take }));
+    delete session.sectionNames;
+    await saveSession(session);
+    if (rerender) refreshSections();
+  }
+
+  /** Re-derive the report after a section edit, without resetting zoom or playback. */
+  function refreshSections() {
+    report = buildReport(session.analysis, session.settings, effectiveSections(session));
+    $('insights').innerHTML = report.insights.map((i) => `<li>${esc(i)}</li>`).join('');
+    chart.setData({ sections: chartSections() });
+    renderSections();
+  }
+
+  chart.addEventListener('sections', (e) => saveSections(e.detail));
 
   function renderSections() {
     const secs = report.sections || [];
     $('secCard').hidden = !secs.length;
-    if (!secs.length) return;
+    $('secReset').hidden = !session.sections;
+    const colors = colorIndexes(secs);
+    const cur = cursor == null ? -1 : sectionAt(secs, cursor);
     const multiTake = new Set(secs.map((s) => s.take)).size > 1;
     const rows = secs.map((s, i) => {
       const sm = s.summary;
-      return `<tr class="clickable" data-i="${i}">
-        <td><span class="swatch" style="background:var(--series-${((s.label.charCodeAt(0) - 65) % 8) + 1})"></span></td>
-        <td><input class="name" data-i="${i}" value="${esc(sectionName(i))}" aria-label="Section name"> <span class="muted small">${s.label}</span></td>
-        ${multiTake ? `<td class="num">${s.take}</td>` : ''}
+      return `<tr class="clickable${i === cur ? ' current' : ''}" data-i="${i}">
+        <td><span class="swatch" style="background:var(--series-${(colors[i] % 8) + 1})"></span></td>
+        <td><input class="name" data-i="${i}" value="${esc(s.name)}" list="secNameList" aria-label="Section name"></td>
+        ${multiTake ? `<td class="num">${s.take ?? ''}</td>` : ''}
         <td class="num">${fmtTime(s.start)}</td>
         <td class="num">${fmtDuration(s.end - s.start)}</td>
         <td class="num">${s.bars || '–'}</td>
@@ -199,8 +239,11 @@ export function initAnalyze() {
         <td class="num">${fmtMs(s.spreadMs)}</td>
       </tr>`;
     }).join('');
-    $('secTable').innerHTML = `<thead><tr><th></th><th>Section</th>${multiTake ? '<th class="num">Song</th>' : ''}<th class="num">Start</th><th class="num">Length</th><th class="num">Bars</th>
-      <th class="num">Avg BPM</th><th class="num">Drift</th><th class="num">Steadiness</th><th class="num">Jitter</th><th class="num">Attack spread</th></tr></thead><tbody>${rows}</tbody>`;
+    $('secTable').innerHTML = secs.length ? `<thead><tr><th></th><th>Section</th>${multiTake ? '<th class="num">Song</th>' : ''}<th class="num">Start</th><th class="num">Length</th><th class="num">Bars</th>
+      <th class="num">Avg BPM</th><th class="num">Drift</th><th class="num">Steadiness</th><th class="num">Jitter</th><th class="num">Attack spread</th></tr></thead><tbody>${rows}</tbody>` : '';
+    const used = [...new Set([...SECTION_NAMES, ...secs.map((s) => s.name.replace(/\s+\d+$/, ''))])];
+    $('secNameList').innerHTML = used.map((n) => `<option value="${esc(n)}">`).join('');
+    updateSectionTools();
     $('secTable').querySelectorAll('tr.clickable').forEach((tr) => {
       tr.addEventListener('click', (e) => {
         if (e.target.tagName === 'INPUT') return;
@@ -211,13 +254,42 @@ export function initAnalyze() {
       });
     });
     $('secTable').querySelectorAll('input.name').forEach((inp) => {
-      inp.addEventListener('change', async () => {
-        session.sectionNames = { ...(session.sectionNames || {}), [inp.dataset.i]: inp.value.trim() || report.sections[+inp.dataset.i].name };
-        await saveSession(session);
-        chart.setData({ sections: report.sections.map((x, i) => ({ ...x, name: sectionName(i), colorIndex: x.label.charCodeAt(0) - 65 })) });
+      inp.addEventListener('change', () => {
+        const list = editable(session);
+        const i = +inp.dataset.i;
+        list[i].name = inp.value.trim() || list[i].name;
+        saveSections(list);
       });
     });
   }
+
+  function updateSectionTools() {
+    const secs = report?.sections || [];
+    const cur = cursor == null ? -1 : sectionAt(secs, cursor);
+    const splitOk = cursor != null && canSplit(secs, cursor);
+    $('secSplit').disabled = !splitOk;
+    $('secSplit').title = splitOk ? `Split "${secs[cur].name}" at ${fmtTime(cursor)}` : 'Click the chart where the new section should start';
+    $('secJoin').disabled = cur < 0 || cur >= secs.length - 1;
+    $('secJoin').title = cur >= 0 && cur < secs.length - 1 ? `Join "${secs[cur].name}" with "${secs[cur + 1].name}"` : 'Click a section (or the chart) first';
+    $('secTable').querySelectorAll('tr.clickable').forEach((tr) => tr.classList.toggle('current', +tr.dataset.i === cur));
+  }
+
+  $('secSplit').onclick = () => {
+    if (cursor == null) return;
+    const t = snapToBeat(session.analysis?.beats, cursor);
+    saveSections(split(editable(session), canSplit(effectiveSections(session), t) ? t : cursor));
+  };
+  $('secJoin').onclick = () => {
+    const list = editable(session);
+    saveSections(joinNext(list, sectionAt(list, cursor)));
+  };
+  $('secReset').onclick = async () => {
+    delete session.sections;
+    delete session.sectionNames;
+    await saveSession(session);
+    refreshSections();
+    toast('Sections reset to the automatic ones.');
+  };
 
   function renderProfile() {
     const prof = report.profile || [];
@@ -238,13 +310,14 @@ export function initAnalyze() {
 
   // ---- bar settings, octave fix ----------------------------------------
   $('resBpb').addEventListener('change', async (e) => {
-    session.settings.beatsPerBar = +e.target.value;
-    session.settings.barPhase = Math.min(session.settings.barPhase, session.settings.beatsPerBar - 1);
+    const st = session.settings;
+    st.beatsPerBar = +e.target.value;
+    if (st.barPhase !== 'auto') st.barPhase = Math.min(st.barPhase, st.beatsPerBar - 1);
     await saveSession(session);
     render();
   });
   $('resPhase').addEventListener('change', async (e) => {
-    session.settings.barPhase = +e.target.value;
+    session.settings.barPhase = e.target.value === 'auto' ? 'auto' : +e.target.value;
     await saveSession(session);
     render();
   });
@@ -285,34 +358,62 @@ export function initAnalyze() {
     audio.pause();
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     audioUrl = null;
+    cursor = null;
     $('resPlay').hidden = !session.audio;
     $('resTime').textContent = '';
+    $('resBeat').hidden = true;
     chart.setPlayhead(null);
+    updateSectionTools();
     if (!session.audio) { audio.removeAttribute('src'); return; }
     audioUrl = URL.createObjectURL(session.audio);
     audio.src = audioUrl;
     $('resPlay').textContent = '▶ Play';
   }
   function seek(t) {
-    if (!session?.audio) return;
-    audio.currentTime = t;
+    cursor = t;
     chart.setPlayhead(t);
     $('resTime').textContent = fmtTime(t);
+    updateSectionTools();
+    if (session?.audio) audio.currentTime = t;
   }
   chart.addEventListener('seek', (e) => {
-    if (!session?.audio) return;
+    if (!session) return;
     seek(e.detail);
-    if (audio.paused) audio.play().catch(() => {});
+    if (session.audio && audio.paused) audio.play().catch(() => {});
   });
   $('resPlay').onclick = () => (audio.paused ? audio.play().catch((e) => toast(`Cannot play: ${e.message}`)) : audio.pause());
   audio.addEventListener('play', () => { $('resPlay').textContent = '❚❚ Pause'; tick(); });
-  audio.addEventListener('pause', () => { $('resPlay').textContent = '▶ Play'; });
+  audio.addEventListener('pause', () => { $('resPlay').textContent = '▶ Play'; $('resBeat').hidden = true; });
+  let lastSec = -1;
   function tick() {
     if (audio.paused) return;
-    chart.setPlayhead(audio.currentTime);
-    $('resTime').textContent = `${fmtTime(audio.currentTime)} / ${fmtTime(session.analysis?.duration ?? session.duration)}`;
+    const t = audio.currentTime;
+    cursor = t;
+    chart.setPlayhead(t);
+    $('resTime').textContent = `${fmtTime(t)} / ${fmtTime(session.analysis?.duration ?? session.duration)}`;
+    showBeat(t);
+    const sec = sectionAt(report.sections || [], t);
+    if (sec !== lastSec) { lastSec = sec; updateSectionTools(); }
     requestAnimationFrame(tick);
   }
+
+  /** Beat counter while playing, to check by ear where the "1" is. */
+  function showBeat(t) {
+    const beats = session.analysis?.beats, pos = report.positions?.pos;
+    const el = $('resBeat');
+    if (!beats?.length || !pos) { el.hidden = true; return; }
+    let lo = 0, hi = beats.length - 1;
+    if (t < beats[0] - 0.05) { el.hidden = true; return; }
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (beats[m] <= t + 0.03) lo = m; else hi = m; }
+    const i = beats[hi] <= t + 0.03 ? hi : lo;
+    const gap = (beats[i + 1] ?? beats[i] + 1) - beats[i];
+    if (pos[i] < 0 || t - beats[i] > Math.min(1.5, 1.5 * gap)) { el.hidden = true; return; }
+    const bpb = session.settings.beatsPerBar;
+    if (el.childElementCount !== bpb) el.innerHTML = Array.from({ length: bpb }, (_, k) => `<span>${k + 1}</span>`).join('');
+    [...el.children].forEach((c, k) => c.classList.toggle('on', k === pos[i]));
+    el.hidden = false;
+  }
+
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Space' || $('view-analyze').hidden || !session?.audio) return;
     if (/INPUT|SELECT|TEXTAREA|BUTTON/.test(document.activeElement?.tagName)) return;
@@ -321,23 +422,30 @@ export function initAnalyze() {
   });
 
   // ---- export -----------------------------------------------------------
-  const safeName = () => (session?.name || 'session').replace(/[^\w\- ]+/g, '').trim() || 'session';
-  $('resExportJson').onclick = () => {
-    const { audio: _a, ...rest } = session;
-    download(`${safeName()}.json`, JSON.stringify({ ...rest, report: { summary: report.summary, insights: report.insights } }, null, 1), 'application/json');
+  $('resExport').onclick = async () => {
+    const btn = $('resExport');
+    btn.disabled = true;
+    try {
+      download(`${safeFileName(session.name)}.zip`, await exportSessions([session]));
+    } catch (err) {
+      toast(`Export failed: ${err.message}`, 6000);
+    } finally {
+      btn.disabled = false;
+    }
   };
   $('resExportCsv').onclick = () => {
-    const secAt = (t) => { const i = (report.sections || []).findIndex((s) => t >= s.start && t < s.end); return i < 0 ? '' : sectionName(i); };
+    const secAt = (t) => { const i = sectionAt(report.sections || [], t); return i < 0 ? '' : report.sections[i].name.replace(/"/g, "'"); };
     let csv;
     if (session.analysis) {
       const spread = new Map(session.analysis.beats.map((t, i) => [t, session.analysis.spreadMs[i]]));
-      csv = 'time_s,local_bpm,offset_ms,attack_spread_ms,section\n' + report.beatPts
-        .map((p) => [p.t.toFixed(3), p.bpm.toFixed(2), p.residualMs.toFixed(1), spread.get(p.t) ?? '', `"${secAt(p.t)}"`].join(',')).join('\n');
+      const barPos = new Map(session.analysis.beats.map((t, i) => [t, report.positions.pos[i]]));
+      csv = 'time_s,local_bpm,offset_ms,attack_spread_ms,beat_in_bar,section\n' + report.beatPts
+        .map((p) => [p.t.toFixed(3), p.bpm.toFixed(2), p.residualMs.toFixed(1), spread.get(p.t) ?? '', (barPos.get(p.t) ?? -1) + 1 || '', `"${secAt(p.t)}"`].join(',')).join('\n');
     } else {
       csv = 'time_s,bpm,confidence\n' + session.live.points.map((p) => [p.t, p.bpm ?? '', p.c].join(',')).join('\n');
     }
-    download(`${safeName()}.csv`, csv, 'text/csv');
+    download(`${safeFileName(session.name)}.csv`, csv, 'text/csv');
   };
 
-  return { openSession, reset, chart, isBusy: () => busy };
+  return { openSession, reset, chart, isBusy: () => busy, openFile };
 }
