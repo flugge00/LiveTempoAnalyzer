@@ -1,6 +1,6 @@
 # Live Tempo Analyzer
 
-See whether your band drifts. Put a phone, tablet or laptop in the rehearsal room, press **Start**, and watch the tempo in a moving graph. Afterwards, open the session to see song sections, per-bar tempo, how tight the timing was, and which beat of the bar you rush.
+See whether your band drifts. Record one song at a time: put a phone, tablet or laptop in the rehearsal room, type which song you're playing, press **Start** (or **Count in**), and press **Stop** when the song ends. Watch the tempo in a moving graph while you play. Afterwards, open the recording to see song sections, per-bar tempo, how tight the timing was, and which beat of the bar you rush. Record the same song again next rehearsal and compare the takes.
 
 Everything runs in the browser. Audio never leaves the device, and there is no server, so it can be hosted on GitHub Pages.
 
@@ -8,7 +8,7 @@ https://flugge00.github.io/LiveTempoAnalyzer/
 
 ## Features
 
-- **Live mode:** microphone → tempo reading every 0.25 s, big BPM readout, drift vs. start (or vs. a target tempo), trend (BPM/min), steadiness, and a moving graph. Markers (press `M`). The target tempo sits next to the Start button. ×2 / ÷2 in Settings fix half/double-tempo readings. The screen stays awake while recording.
+- **Live mode:** name the song (suggestions come from earlier recordings, and picking one fills in its target tempo), then microphone → tempo reading every 0.25 s, big BPM readout, drift vs. start (or vs. a target tempo), trend (BPM/min), steadiness, and a moving graph. Markers (press `M`). The target tempo sits next to the Start button. ×2 / ÷2 in Settings fix half/double-tempo readings. The screen stays awake while recording.
 - **Count-in:** 1–5 bars of click and/or a full-screen flash at the target tempo, then silence, so the band plays free.
 - **Session recording:** the audio is recorded alongside the live readings (optional), so every live session can be analyzed in detail afterwards.
 - **File analysis:** drop an mp3/wav/m4a/ogg/webm and get:
@@ -17,7 +17,6 @@ https://flugge00.github.io/LiveTempoAnalyzer/
   - **bars that start on the "1"**, found automatically (a beat counter during playback lets you check), or set by hand
   - **timing inside the bar:** average early/late offset per beat position (e.g. "beat 4 is 8 ms early")
   - plain-language insights ("Choruses ran 2.4 BPM faster than verses")
-  - long rehearsal recordings with several songs are split into takes at pauses
 - **Compare takes:** tick sessions of the same song and overlay their tempo curves, with a take-by-take table ("are we getting steadier?").
 - **Sharing:** export one or more sessions as a `.zip` (analysis + audio) and import it on another device. CSV export for spreadsheets.
 - **Works offline and installs as an app** (Add to Home Screen / Install) thanks to a service worker.

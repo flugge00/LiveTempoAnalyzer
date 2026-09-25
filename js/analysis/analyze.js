@@ -74,7 +74,11 @@ export function analyzeAudio(samples, sampleRate, opts = {}, onProgress = () => 
   };
 }
 
-/** A rehearsal recording can hold several songs: segment each continuous take separately. */
+/**
+ * Segment each stretch of continuous playing separately. A recording is one
+ * song, but it can hold a false start before the real take, or a long stop
+ * in the middle; parts shorter than 32 beats (a false start) get no sections.
+ */
 function sectionsPerTake(feats, beatFrames, beats, duration) {
   const out = [];
   let offset = 0;

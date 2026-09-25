@@ -54,6 +54,13 @@
 - [x] Metronome icon (needle off-centre = drift, matching the app's whole premise) as favicon (SVG) and PWA icons
 - [x] Dark/light toggle in the header, remembered per device; follows the OS until then
 
+## Workflow: one recording per song (2026-09-25)
+
+The band records one song at a time (Start before the song, Stop after it), not whole rehearsals.
+- [x] Optional "Song" field on the Live tab names the recording. Suggestions come from earlier recordings, and picking a song fills in its last target tempo.
+- [x] Unnamed recordings are called "Untitled song HH:MM" (was "Rehearsal <date>")
+- [x] No "Song" column in the sections table any more; a false start or a long stop inside the song no longer looks like a second song
+
 ## Next ideas
 
 - Check the automatic downbeat on more real songs (on the two test recordings the phase is stable, but only by ear can we confirm beat 1 vs 3 on "Memories")

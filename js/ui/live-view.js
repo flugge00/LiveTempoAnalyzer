@@ -1,11 +1,15 @@
-// Live tab: start/stop, big BPM readout, drift tiles and the moving graph.
+// Live tab: one recording per song. Song name, start/stop, big BPM readout,
+// drift tiles and the moving graph.
 
 import { LiveEngine, listInputs } from '../audio/live.js';
 import { countIn } from '../audio/count-in.js';
 import { TimeChart } from './chart.js';
 import { $, esc, toast, fmtBpm, fmtSigned, fmtDuration, driftStatus, statusBadge, prefs } from './dom.js';
 import { median, sd, slope } from '../dsp/stats.js';
-import { saveSession, newId, requestPersistence } from '../store/db.js';
+import { saveSession, listSessions, newId, requestPersistence } from '../store/db.js';
+
+// names the app makes up itself: not worth suggesting as song names
+const AUTO_NAME = /^(Untitled song|Rehearsal) /;
 
 export function initLive() {
   const engine = new LiveEngine();
@@ -43,6 +47,36 @@ export function initLive() {
   S.gate.addEventListener('input', () => { $('setGateVal').textContent = S.gate.value; engine.gateDb = +S.gate.value; });
   S.target.addEventListener('change', () => { if (engine.running) engine.setExpectedBpm(target()); });
   S.view.addEventListener('change', applyView);
+
+  // ---- song name -------------------------------------------------------
+  // Suggestions come from earlier recordings (including imported ones), and
+  // picking a song fills in the target tempo it was last recorded with.
+  const song = $('liveSong');
+  song.value = prefs.get('song', '');
+  let songTargets = new Map();
+  async function refreshSongs() {
+    const list = await listSessions(); // newest first
+    songTargets = new Map();
+    const names = [];
+    for (const s of list) {
+      const name = s.name?.trim();
+      if (!name || AUTO_NAME.test(name) || names.includes(name)) continue;
+      names.push(name);
+      if (s.settings?.targetBpm) songTargets.set(name.toLowerCase(), s.settings.targetBpm);
+    }
+    $('songList').innerHTML = names.map((n) => `<option value="${esc(n)}">`).join('');
+  }
+  refreshSongs();
+  song.addEventListener('change', () => {
+    song.value = song.value.trim();
+    prefs.set('song', song.value);
+    const bpm = songTargets.get(song.value.toLowerCase());
+    if (!bpm || engine.running || +S.target.value === bpm) return;
+    S.target.value = bpm;
+    persist();
+    applyReference();
+    toast(`Target ${bpm} BPM, as last time you recorded "${song.value}"`, 3000);
+  });
 
   async function refreshDevices() {
     const devs = await listInputs();
@@ -215,7 +249,7 @@ export function initLive() {
       $('tDriftSub').innerHTML = `${statusBadge(st)} ${fmtSigned(pct)}% · ${st.word}`;
       $('liveStatus').innerHTML = `${statusBadge(st)} ${st.word === 'steady' ? 'On tempo' : st.word === 'rushing' ? 'Faster than ' + (tg ? 'target' : 'start') : 'Slower than ' + (tg ? 'target' : 'start')} (${fmtSigned(d)} BPM)`;
     } else if (last.v == null) {
-      $('liveStatus').textContent = 'No steady beat detected (quiet, or between songs).';
+      $('liveStatus').textContent = 'No steady beat detected (quiet, or not playing).';
     } else {
       $('liveStatus').textContent = 'Measuring start tempo…';
     }
@@ -260,7 +294,7 @@ export function initLive() {
       const created = Date.now();
       const session = {
         id: newId(),
-        name: `Rehearsal ${new Date(created).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`,
+        name: song.value.trim() || `Untitled song ${new Date(created).toLocaleTimeString([], { timeStyle: 'short' })}`,
         created,
         kind: 'live',
         duration: points.length ? points[points.length - 1].t : 0,
@@ -271,8 +305,9 @@ export function initLive() {
       try {
         await saveSession(session);
         const n = $('liveSaved');
-        n.innerHTML = `<span>Session saved (${fmtDuration(session.duration)}).</span><a class="btn btn-primary" href="#/session/${session.id}">Open detailed analysis →</a>`;
+        n.innerHTML = `<span><b>${esc(session.name)}</b> saved (${fmtDuration(session.duration)}).</span><a class="btn btn-primary" href="#/session/${session.id}">See how it went →</a>`;
         n.hidden = false;
+        refreshSongs();
       } catch (err) {
         console.error(err);
         toast(`Could not save the session: ${err.message}`, 6000);
@@ -283,5 +318,5 @@ export function initLive() {
   }
 
   applyReference();
-  return { chart };
+  return { chart, refreshSongs };
 }

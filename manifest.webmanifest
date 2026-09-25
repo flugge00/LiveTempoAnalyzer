@@ -1,7 +1,7 @@
 {
   "name": "Live Tempo Analyzer",
   "short_name": "Tempo",
-  "description": "See whether your band drifts: live tempo tracking from the microphone, plus detailed analysis of rehearsal recordings.",
+  "description": "See whether your band drifts: live tempo tracking from the microphone, plus a detailed look at each song afterwards.",
   "id": "./",
   "start_url": "./#/live",
   "scope": "./",

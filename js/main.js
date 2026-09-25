@@ -29,7 +29,7 @@ function route() {
   else if (view === 'compare') compare.open((arg || '').split(',').filter(Boolean));
   else if (view === 'analyze' && !analyze.isBusy()) analyze.reset();
   else if (view === 'sessions') sessions.refresh();
-  else if (view === 'live') live.chart.draw();
+  else if (view === 'live') { live.chart.draw(); live.refreshSongs(); }
 }
 
 async function importFiles(files) {

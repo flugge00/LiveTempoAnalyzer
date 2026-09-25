@@ -222,13 +222,11 @@ export function initAnalyze({ onImportFile } = {}) {
     $('secReset').hidden = !session.sections;
     const colors = colorIndexes(secs);
     const cur = cursor == null ? -1 : sectionAt(secs, cursor);
-    const multiTake = new Set(secs.map((s) => s.take)).size > 1;
     const rows = secs.map((s, i) => {
       const sm = s.summary;
       return `<tr class="clickable${i === cur ? ' current' : ''}" data-i="${i}">
         <td><span class="swatch" style="background:var(--series-${(colors[i] % 8) + 1})"></span></td>
         <td><input class="name" data-i="${i}" value="${esc(s.name)}" list="secNameList" aria-label="Section name"></td>
-        ${multiTake ? `<td class="num">${s.take ?? ''}</td>` : ''}
         <td class="num">${fmtTime(s.start)}</td>
         <td class="num">${fmtDuration(s.end - s.start)}</td>
         <td class="num">${s.bars || '–'}</td>
@@ -239,7 +237,7 @@ export function initAnalyze({ onImportFile } = {}) {
         <td class="num">${fmtMs(s.spreadMs)}</td>
       </tr>`;
     }).join('');
-    $('secTable').innerHTML = secs.length ? `<thead><tr><th></th><th>Section</th>${multiTake ? '<th class="num">Song</th>' : ''}<th class="num">Start</th><th class="num">Length</th><th class="num">Bars</th>
+    $('secTable').innerHTML = secs.length ? `<thead><tr><th></th><th>Section</th><th class="num">Start</th><th class="num">Length</th><th class="num">Bars</th>
       <th class="num">Avg BPM</th><th class="num">Drift</th><th class="num">Steadiness</th><th class="num">Jitter</th><th class="num">Attack spread</th></tr></thead><tbody>${rows}</tbody>` : '';
     const used = [...new Set([...SECTION_NAMES, ...secs.map((s) => s.name.replace(/\s+\d+$/, ''))])];
     $('secNameList').innerHTML = used.map((n) => `<option value="${esc(n)}">`).join('');

@@ -198,6 +198,11 @@ label { color: var(--text-secondary); font-size: 0.9rem; }
 .setting-label { color: var(--text-secondary); font-size: 0.9rem; }
 .setting small { color: var(--text-muted); font-size: 0.8rem; }
 
+/* song name above the start button */
+.song-row { display: flex; }
+.song-field { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; max-width: 480px; }
+.song-field input { flex: 1; min-width: 0; min-height: 40px; font-size: 1.05rem; }
+
 /* target tempo next to the count-in button */
 .target-field { display: inline-flex; align-items: center; gap: 6px; }
 .target-field input { width: 76px; min-height: 40px; font-size: 1.05rem; text-align: center; }

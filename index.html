@@ -50,6 +50,13 @@
         </div>
       </div>
 
+      <div class="song-row">
+        <label class="song-field">Song
+          <input id="liveSong" type="text" list="songList" placeholder="Which song? (optional)" autocomplete="off" enterkeyhint="done">
+        </label>
+        <datalist id="songList"></datalist>
+      </div>
+
       <div class="controls">
         <button id="liveStart" class="btn btn-record" type="button"><span class="dot" aria-hidden="true"></span><span class="label">Start</span></button>
         <button id="liveCount" class="btn" type="button" title="Count the band in at the target tempo (starts recording if needed)">Count in</button>
