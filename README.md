@@ -1,0 +1,73 @@
+# Live Tempo Analyzer
+
+See whether your band drifts. Put a phone, tablet or laptop in the rehearsal room, press **Start**, and watch the tempo in a moving graph. Afterwards, open the session to see song sections, per-bar tempo, how tight the timing was, and which beat of the bar you rush.
+
+Everything runs in the browser. Audio never leaves the device, and there is no server, so it can be hosted on GitHub Pages.
+
+## Features
+
+- **Live mode:** microphone → tempo reading every 0.25 s, big BPM readout, drift vs. start (or vs. a target tempo), trend (BPM/min), steadiness, and a moving graph. Markers (press `M`) and ×2 / ÷2 buttons fix half/double-tempo readings. The screen stays awake while recording.
+- **Session recording:** the audio is recorded alongside the live readings (optional), so every live session can be analyzed in detail afterwards.
+- **File analysis:** drop an mp3/wav/m4a/ogg/webm and get:
+  - a tempo curve (8 s window) and per-bar tempo, with click-to-play audio synced to the graph
+  - automatically detected **song sections** (Intro / Verse / Chorus / Bridge / Outro, renamable), with average tempo, drift, steadiness, timing jitter and attack spread per section
+  - **timing inside the bar:** average early/late offset per beat position (e.g. "beat 4 is 8 ms early")
+  - plain-language insights ("Choruses ran 2.4 BPM faster than verses")
+  - long rehearsal recordings with several songs are split into takes at pauses
+- **Sessions** are stored locally in the browser (IndexedDB). You can export JSON or CSV.
+- A **demo recording** (Analyze tab, or `?demo` in the URL) shows what the analysis looks like.
+
+## Run locally
+
+Microphone access requires `https://` or `localhost`. Any static file server works:
+
+```powershell
+python -m http.server 8000
+# open http://localhost:8000
+```
+
+There is no build step and there are no dependencies. The code is plain ES modules.
+
+## Deploy to GitHub Pages
+
+1. Push this repo to GitHub, default branch `main`.
+2. In the repo's **Settings → Pages**, set *Source* to **GitHub Actions** (one-time, manual step).
+3. The included `.github/workflows/deploy.yml` runs the tests, copies `index.html`, `css/` and `js/` into `_site/`, and publishes to Pages on every push to `main`.
+4. The site appears at `https://<user>.github.io/<repo>/` (linked from the Actions run and from *Settings → Pages*). Pages serves over HTTPS, so the microphone works on phones too.
+
+## Tests
+
+The DSP code is tested against synthetic drum tracks with known tempo, drift, jitter, a rushed beat, and verse/chorus structure:
+
+```powershell
+node tests/run.mjs        # any Node >= 18
+.\tests\run.ps1           # Windows without Node: uses VS Code's bundled runtime
+```
+
+Real recordings: put them in `test_audio/` (git-ignored by default so rehearsals stay private), then:
+
+```powershell
+node tools/decode-audio.mjs   # decodes with headless Edge/Chrome into test_audio/.cache
+node tests/real-audio.mjs     # checks there are no half/double-tempo jumps, offline and live
+```
+
+## How it works
+
+| Stage | File | Method |
+|---|---|---|
+| Onset strength | `js/dsp/onset.js` | 36 log-spaced bands, log-compressed spectral flux, ~172 frames/s |
+| Tempo | `js/dsp/tempo.js` | Autocorrelation of an 8 s window, harmonic comb scored on a 0.25%-step BPM grid (sub-BPM precision). HMM over the grid resolves half/double tempo: forward filter live, Viterbi offline. |
+| Octave consistency | `js/dsp/tempo.js` (`OctaveResolver`) | A song's tempo never jumps ×2/×½/×3 mid-song, but a half-time verse *sounds* like half the tempo. Per take (continuous playing), readings at those ratios are folded onto one canonical tempo, chosen by majority vote weighted by a tempo prior. Offline applies the final decision to the whole take; live rescales what's already plotted if it changes its mind. Unrelated readings are dropped as glitches unless they persist 4 s (a real tempo change). |
+| Beats | `js/dsp/beats.js` | Dynamic-programming beat tracker (Ellis 2007) guided by the time-varying tempo curve; per-beat tempo from a sliding linear fit; bar tempo; beat-position profile; attack spread |
+| Sections | `js/dsp/segment.js` | Beat-synchronous chroma + cepstral timbre → self-similarity matrix → Foote novelty boundaries → clustering of repeated parts → heuristic names |
+| Pipeline | `js/analysis/` | Runs in a Web Worker; audio decoded and resampled to 22.05 kHz |
+| UI | `js/ui/` | Canvas chart (zoom/pan/pinch, tooltip, sections, playhead), views, IndexedDB storage |
+
+**Measured on synthetic tracks:** tempo within ±0.35 BPM on a drifting, humanized track; 98.6% of beats found within 30 ms; a 25 ms rushed beat 4 measured as 24.9 ms.
+
+### Known limits
+
+- Which octave a whole song is read in can still be ambiguous (a 174 BPM track can reasonably read as 87), but it stays consistent within the song. Set a target tempo, or press ×2 / ÷2 once to fix the whole song.
+- Section names are guesses from repetition and loudness. Boundaries are usually right; the names are easy to fix by clicking them.
+- *Attack spread* comes from a single mixed recording. Use it to compare sessions, not as an absolute measure of how tight individual players are.
+- Stored sessions live in one browser on one device. There is no sync between band members yet (see PLAN.md).

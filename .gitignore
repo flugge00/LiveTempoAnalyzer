@@ -1,0 +1,9 @@
+tests/last-run.log
+public/
+node_modules/
+*.tmp
+probe-tmp.js
+
+# band recordings stay private by default (remove to commit them)
+test_audio/
+

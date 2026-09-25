@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0d">
+  <meta name="description" content="See whether your band drifts: live tempo tracking from the microphone, plus detailed after-the-fact analysis of recordings.">
+  <title>Live Tempo Analyzer</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231a1a19'/%3E%3Cpath d='M5 21 L10 14 L15 18 L20 10 L27 13' fill='none' stroke='%233987e5' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="#/live">Live Tempo Analyzer</a>
+    <nav class="tabs" aria-label="Main">
+      <a href="#/live" data-route="live">Live</a>
+      <a href="#/analyze" data-route="analyze">Analyze file</a>
+      <a href="#/sessions" data-route="sessions">Sessions</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- LIVE ------------------------------------------------------------>
+    <section id="view-live" class="view" hidden>
+      <div class="live-top">
+        <div class="hero" aria-live="polite">
+          <div class="hero-row"><span id="liveBpm" class="hero-bpm">–</span><span class="hero-unit">BPM</span></div>
+          <div id="liveStatus" class="status-line">Press Start and play. Put the device where it hears the drums well.</div>
+        </div>
+        <div class="tiles" id="liveTiles">
+          <div class="tile"><div class="tile-label">Start tempo</div><div class="tile-value" id="tStart">–</div><div class="tile-sub">first 15 s of playing</div></div>
+          <div class="tile"><div class="tile-label" id="tDriftLabel">Drift since start</div><div class="tile-value" id="tDrift">–</div><div class="tile-sub" id="tDriftSub">&nbsp;</div></div>
+          <div class="tile"><div class="tile-label">Trend</div><div class="tile-value" id="tTrend">–</div><div class="tile-sub">BPM per minute, last 60 s</div></div>
+          <div class="tile"><div class="tile-label">Steadiness</div><div class="tile-value" id="tSteady">–</div><div class="tile-sub">± BPM, last 30 s</div></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="liveStart" class="btn btn-record" type="button"><span class="dot" aria-hidden="true"></span><span class="label">Start</span></button>
+        <button id="liveMark" class="btn" type="button" disabled title="Drop a marker at this moment (M)">Mark</button>
+        <div class="seg" role="group" aria-label="Tempo octave">
+          <button id="liveHalf" class="btn" type="button" disabled title="Reading is double the real tempo">÷2</button>
+          <button id="liveDouble" class="btn" type="button" disabled title="Reading is half the real tempo">×2</button>
+        </div>
+        <div class="meter" title="Input level"><div id="liveMeter" class="meter-fill"></div></div>
+        <span id="liveTimer" class="timer">0:00</span>
+      </div>
+
+      <div class="card chart-card">
+        <div class="chart-head">
+          <div class="legend" id="liveLegend"></div>
+          <div class="chart-tools">
+            <label>Show
+              <select id="liveWindow">
+                <option value="60">last 1 min</option>
+                <option value="120" selected>last 2 min</option>
+                <option value="300">last 5 min</option>
+                <option value="0">whole session</option>
+              </select>
+            </label>
+            <button id="liveFollow" class="btn btn-small" type="button" hidden>Follow live</button>
+          </div>
+        </div>
+        <div id="liveChart" class="chart-box"></div>
+      </div>
+
+      <div id="liveSaved" class="card notice" hidden></div>
+
+      <details class="card settings">
+        <summary>Settings</summary>
+        <div class="settings-grid">
+          <label>Target tempo (optional)
+            <input id="setTarget" type="number" min="30" max="300" step="0.5" placeholder="e.g. 120" inputmode="decimal">
+            <small>Draws a reference line and helps avoid half/double-tempo readings.</small>
+          </label>
+          <label>Tolerance band
+            <select id="setTol"><option value="1">± 1%</option><option value="2" selected>± 2%</option><option value="3">± 3%</option><option value="5">± 5%</option></select>
+          </label>
+          <label>Analysis window
+            <select id="setWindow"><option value="4">4 s (fast, jumpier)</option><option value="6">6 s</option><option value="8" selected>8 s (default)</option><option value="12">12 s (smooth, slower)</option></select>
+            <small>How much audio each tempo reading looks at.</small>
+          </label>
+          <label>Noise gate
+            <input id="setGate" type="range" min="-70" max="-20" step="1" value="-50">
+            <small><span id="setGateVal">-50</span> dBFS: quieter than this counts as "not playing".</small>
+          </label>
+          <label>Microphone
+            <select id="setDevice"><option value="">Default input</option></select>
+          </label>
+          <label class="check"><input id="setRecord" type="checkbox" checked> Record audio during the session
+            <small>Needed for the detailed analysis afterwards (sections, beats, bar timing). Stays on this device.</small>
+          </label>
+        </div>
+      </details>
+    </section>
+
+    <!-- ANALYZE / SESSION ------------------------------------------------->
+    <section id="view-analyze" class="view" hidden>
+      <div id="dropZone" class="card drop">
+        <p class="drop-title">Drop a recording here</p>
+        <p>mp3, wav, m4a, ogg, webm… or</p>
+        <label class="btn btn-primary">Choose audio file<input id="fileInput" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm" hidden></label>
+        <label class="inline">Expected tempo (optional) <input id="fileHint" type="number" min="30" max="300" step="1" placeholder="auto" inputmode="numeric"></label>
+        <p class="muted small">Everything runs in your browser. The file is never uploaded anywhere.</p>
+        <button id="demoBtn" class="btn btn-small" type="button">No recording at hand? Try a demo</button>
+      </div>
+
+      <div id="progress" class="card progress" hidden>
+        <div class="progress-bar"><div id="progressFill"></div></div>
+        <div id="progressText" class="muted">Working…</div>
+      </div>
+
+      <div id="result" hidden>
+        <div class="result-head">
+          <input id="resTitle" class="title-input" aria-label="Session name">
+          <span id="resMeta" class="muted"></span>
+        </div>
+        <ul id="insights" class="insights"></ul>
+        <div class="tiles" id="resTiles"></div>
+
+        <div class="card chart-card">
+          <div class="toolbar">
+            <button id="resPlay" class="btn" type="button" hidden>▶ Play</button>
+            <span id="resTime" class="timer small"></span>
+            <span class="sep"></span>
+            <label>Beats per bar <select id="resBpb"></select></label>
+            <label>Bar starts on beat <select id="resPhase"></select></label>
+            <div class="seg" role="group" aria-label="Tempo octave">
+              <button id="resHalf" class="btn btn-small" type="button" title="Readings are double the real tempo">÷2</button>
+              <button id="resDouble" class="btn btn-small" type="button" title="Readings are half the real tempo">×2</button>
+            </div>
+            <span class="sep"></span>
+            <div class="seg" role="group" aria-label="Zoom">
+              <button id="zoomOut" class="btn btn-small" type="button" aria-label="Zoom out">−</button>
+              <button id="zoomIn" class="btn btn-small" type="button" aria-label="Zoom in">+</button>
+              <button id="zoomReset" class="btn btn-small" type="button">Fit</button>
+            </div>
+          </div>
+          <div class="legend" id="resLegend"></div>
+          <div id="resChart" class="chart-box tall"></div>
+          <p class="muted small hint">Drag to pan, scroll or pinch to zoom, double-click to fit. Click to play from that point.</p>
+        </div>
+
+        <div class="grid-2">
+          <div class="card" id="secCard">
+            <h3>Song sections</h3>
+            <p class="muted small">Detected automatically from repeating harmony and sound. Names are guesses; click a name to rename it.</p>
+            <div class="table-wrap"><table id="secTable" class="data"></table></div>
+          </div>
+          <div class="card" id="profileCard">
+            <h3>Timing inside the bar</h3>
+            <p class="muted small">Average offset of each beat against an even grid through its bar. Negative is early (rushing).</p>
+            <div id="profile" class="profile"></div>
+            <div id="timingTiles" class="tiles compact"></div>
+          </div>
+        </div>
+
+        <details class="card">
+          <summary>How to read these numbers</summary>
+          <dl class="explain">
+            <dt>Tempo curve</dt><dd>Tempo measured over a sliding 8-second window. Smooth, and good for spotting drift over minutes.</dd>
+            <dt>Per-bar tempo</dt><dd>Tempo computed from the duration of each bar, based on detected beats. More detailed but noisier.</dd>
+            <dt>Drift</dt><dd>End tempo minus start tempo (medians of the first and last 15 seconds).</dd>
+            <dt>Steadiness (±)</dt><dd>Standard deviation of the tempo. Lower is steadier.</dd>
+            <dt>Timing jitter</dt><dd>How far individual beats land from a smooth local grid (RMS, ms). Around 5–10 ms is tight; above 20 ms is loose.</dd>
+            <dt>Attack spread</dt><dd>How smeared each beat's attack is (ms). When everyone hits together the attack is one sharp spike; flams and loose playing spread it out. It's measured from one mixed recording, so treat it as a trend indicator rather than an exact number.</dd>
+          </dl>
+        </details>
+
+        <div class="actions">
+          <button id="resExportCsv" class="btn" type="button">Export CSV</button>
+          <button id="resExportJson" class="btn" type="button">Export JSON</button>
+          <button id="resNew" class="btn" type="button">Analyze another file</button>
+        </div>
+        <audio id="resAudio" preload="auto" hidden></audio>
+      </div>
+    </section>
+
+    <!-- SESSIONS ---------------------------------------------------------->
+    <section id="view-sessions" class="view" hidden>
+      <div class="card">
+        <h2>Sessions</h2>
+        <p class="muted small">Stored in this browser on this device.</p>
+        <div class="table-wrap"><table id="sessTable" class="data"></table></div>
+        <p id="sessEmpty" class="muted" hidden>No sessions yet. Record one on the Live tab or analyze a file.</p>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
