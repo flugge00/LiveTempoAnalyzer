@@ -172,6 +172,14 @@ label { color: var(--text-secondary); font-size: 0.9rem; }
 .settings-grid label { display: flex; flex-direction: column; gap: 4px; }
 .settings-grid label.check { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
 .settings-grid small { color: var(--text-muted); flex-basis: 100%; }
+.setting { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.setting-label { color: var(--text-secondary); font-size: 0.9rem; }
+.setting small { color: var(--text-muted); font-size: 0.8rem; }
+
+/* target tempo next to the count-in button */
+.target-field { display: inline-flex; align-items: center; gap: 6px; }
+.target-field input { width: 76px; min-height: 40px; font-size: 1.05rem; text-align: center; }
+.target-field span { color: var(--text-muted); }
 
 .notice { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; justify-content: space-between; }
 

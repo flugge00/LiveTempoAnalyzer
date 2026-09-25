@@ -6,8 +6,8 @@ Everything runs in the browser. Audio never leaves the device, and there is no s
 
 ## Features
 
-- **Live mode:** microphone → tempo reading every 0.25 s, big BPM readout, drift vs. start (or vs. a target tempo), trend (BPM/min), steadiness, and a moving graph. Markers (press `M`) and ×2 / ÷2 buttons fix half/double-tempo readings. The screen stays awake while recording.
-- **Count-in:** 1–2 bars of click and/or a full-screen flash at the target tempo, then silence, so the band plays free.
+- **Live mode:** microphone → tempo reading every 0.25 s, big BPM readout, drift vs. start (or vs. a target tempo), trend (BPM/min), steadiness, and a moving graph. Markers (press `M`). The target tempo sits next to the Start button. ×2 / ÷2 in Settings fix half/double-tempo readings. The screen stays awake while recording.
+- **Count-in:** 1–5 bars of click and/or a full-screen flash at the target tempo, then silence, so the band plays free.
 - **Session recording:** the audio is recorded alongside the live readings (optional), so every live session can be analyzed in detail afterwards.
 - **File analysis:** drop an mp3/wav/m4a/ogg/webm and get:
   - a tempo curve (8 s window) and per-bar tempo, with click-to-play audio synced to the graph

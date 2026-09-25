@@ -109,8 +109,7 @@ export function initLive() {
     if (counting) { counting.stop(); return; }
     const bpm = target();
     if (!bpm) {
-      toast('Set a target tempo first (Settings, below the chart).', 4000);
-      document.querySelector('#view-live details.settings').open = true;
+      toast('Type a target tempo next to Count in first.', 4000);
       S.target.focus();
       return;
     }
@@ -124,8 +123,10 @@ export function initLive() {
     counting = countIn({
       bpm, beatsPerBar: bpb, bars: +S.countBars.value,
       click: mode !== 'flash', ctx: engine.ctx,
-      onBeat: (beat) => {
+      onBeat: (beat, k, total) => {
         $('countNum').textContent = beat + 1;
+        const bars = total / bpb;
+        $('countSub').textContent = bars > 1 ? `Bar ${Math.floor(k / bpb) + 1} of ${bars} · ${bpm} BPM` : `${bpm} BPM`;
         overlay.classList.toggle('one', beat === 0);
         overlay.classList.remove('beat');
         void overlay.offsetWidth; // restart the flash animation

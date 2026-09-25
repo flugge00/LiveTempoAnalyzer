@@ -45,7 +45,7 @@
 - [x] Compare sessions: tick takes on the Sessions tab → overlaid tempo curves (absolute or change from start), a take-by-take table, and plain-language trends
 - [x] Manual section editing: drag boundaries on the chart strip (snaps to beats), split at the playhead, join with the next section, rename with suggestions, reset to automatic. Sections with the same name share a colour.
 - [x] Downbeat detection (`js/dsp/downbeat.js`): harmony change + kick + snare backbeat parity → Viterbi over the position in the bar. "Bar starts on beat: Auto" is the default. A beat counter during playback lets you check it by ear. Older sessions are re-analyzed once when opened.
-- [x] Count-in at the target tempo: 1–2 bars of click and/or full-screen flash, then silence. Starts recording if needed and drops a "Count-in" marker. The start tempo is measured after it.
+- [x] Count-in at the target tempo (typed next to the Count in button): 1–5 bars of click and/or full-screen flash, then silence. Starts recording if needed and drops a "Count-in" marker. The start tempo is measured after it.
 - [ ] Tune section detection on more real rehearsal recordings (names are shaky; boundaries mostly OK). Band corrections made with the new editor, exported as .zip, can now serve as ground truth for tuning.
 
 ## Next ideas

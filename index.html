@@ -44,11 +44,11 @@
       <div class="controls">
         <button id="liveStart" class="btn btn-record" type="button"><span class="dot" aria-hidden="true"></span><span class="label">Start</span></button>
         <button id="liveCount" class="btn" type="button" title="Count the band in at the target tempo (starts recording if needed)">Count in</button>
+        <label class="target-field" title="Target tempo: the count-in plays at this tempo, and the graph draws a reference line. Leave empty to measure drift against the start tempo instead.">Target
+          <input id="setTarget" type="number" min="30" max="300" step="0.5" placeholder="–" inputmode="decimal">
+          <span>BPM</span>
+        </label>
         <button id="liveMark" class="btn" type="button" disabled title="Drop a marker at this moment (M)">Mark</button>
-        <div class="seg" role="group" aria-label="Tempo octave">
-          <button id="liveHalf" class="btn" type="button" disabled title="Reading is double the real tempo">÷2</button>
-          <button id="liveDouble" class="btn" type="button" disabled title="Reading is half the real tempo">×2</button>
-        </div>
         <div class="meter" title="Input level"><div id="liveMeter" class="meter-fill"></div></div>
         <span id="liveTimer" class="timer">0:00</span>
       </div>
@@ -77,11 +77,7 @@
       <details class="card settings">
         <summary>Settings</summary>
         <div class="settings-grid">
-          <label>Target tempo (optional)
-            <input id="setTarget" type="number" min="30" max="300" step="0.5" placeholder="e.g. 120" inputmode="decimal">
-            <small>Draws a reference line and helps avoid half/double-tempo readings.</small>
-          </label>
-          <label>Tolerance band
+          <label>Tolerance band around the target
             <select id="setTol"><option value="1">± 1%</option><option value="2" selected>± 2%</option><option value="3">± 3%</option><option value="5">± 5%</option></select>
           </label>
           <label>Beats per bar
@@ -91,7 +87,7 @@
           <label>Count-in
             <span class="inline-fields">
               <select id="setCountMode" aria-label="Count-in signal"><option value="both">Click + flash</option><option value="click">Click only</option><option value="flash">Flash only</option></select>
-              <select id="setCountBars" aria-label="Count-in length"><option value="1">1 bar</option><option value="2" selected>2 bars</option></select>
+              <select id="setCountBars" aria-label="Count-in length"><option value="1">1 bar</option><option value="2" selected>2 bars</option><option value="3">3 bars</option><option value="4">4 bars</option><option value="5">5 bars</option></select>
             </span>
             <small>Plays at the target tempo, then stops, so the microphone hears only the band. Use flash only if the click would bother anyone.</small>
           </label>
@@ -107,8 +103,16 @@
             <select id="setDevice"><option value="">Default input</option></select>
           </label>
           <label class="check"><input id="setRecord" type="checkbox" checked> Record audio during the session
-            <small>Needed for the detailed analysis afterwards (sections, beats, bar timing). Stays on this device.</small>
+            <small>Saves what the microphone hears (about 0.7 MB per minute) together with the session. With it you can play the session back, get the detailed analysis (beats, bars, sections, timing), and share it with audio. Without it, only the live tempo curve is kept. The recording stays on this device unless you export it.</small>
           </label>
+          <div class="setting">
+            <span class="setting-label">Reading is double or half the real tempo?</span>
+            <div class="seg" role="group" aria-label="Tempo octave">
+              <button id="liveHalf" class="btn btn-small" type="button" disabled title="Reading is double the real tempo">÷2</button>
+              <button id="liveDouble" class="btn btn-small" type="button" disabled title="Reading is half the real tempo">×2</button>
+            </div>
+            <small>While recording: fixes the reading for the current song. Setting a target tempo usually prevents this.</small>
+          </div>
         </div>
       </details>
     </section>
@@ -145,10 +149,6 @@
             <span class="sep"></span>
             <label>Beats per bar <select id="resBpb"></select></label>
             <label>Bar starts on beat <select id="resPhase"></select></label>
-            <div class="seg" role="group" aria-label="Tempo octave">
-              <button id="resHalf" class="btn btn-small" type="button" title="Readings are double the real tempo">÷2</button>
-              <button id="resDouble" class="btn btn-small" type="button" title="Readings are half the real tempo">×2</button>
-            </div>
             <span class="sep"></span>
             <div class="seg" role="group" aria-label="Zoom">
               <button id="zoomOut" class="btn btn-small" type="button" aria-label="Zoom out">−</button>
@@ -187,13 +187,27 @@
           <summary>How to read these numbers</summary>
           <dl class="explain">
             <dt>Tempo curve</dt><dd>Tempo measured over a sliding 8-second window. Smooth, and good for spotting drift over minutes.</dd>
-            <dt>Per-bar tempo</dt><dd>Tempo computed from the duration of each bar, based on detected beats. More detailed but noisier.</dd>
+            <dt>Per-bar tempo</dt><dd>Tempo from the length of each single bar, from one detected "1" to the next. It jumps much more than the 8-second line, and that's mostly real: at about 125 BPM a bar is under 2 seconds, so when each beat of a bar comes about 20 ms early, that bar reads about 5 BPM faster. Most bars stay within ±1 BPM of the line. The big jumps usually sit in fills, pushes into a chorus, or a slowing ending.</dd>
             <dt>Bars and the "1"</dt><dd>With <em>Bar starts on beat: Auto</em>, the first beat of each bar is found from chord changes, the kick drum and the snare backbeat. Press Play and watch the beat counter next to the time. If the "1" is off, choose the right beat by hand.</dd>
             <dt>Drift</dt><dd>End tempo minus start tempo (medians of the first and last 15 seconds).</dd>
             <dt>Steadiness (±)</dt><dd>Standard deviation of the tempo. Lower is steadier.</dd>
             <dt>Timing jitter</dt><dd>How far individual beats land from a smooth local grid (RMS, ms). Around 5–10 ms is tight; above 20 ms is loose.</dd>
             <dt>Attack spread</dt><dd>How smeared each beat's attack is (ms). When everyone hits together the attack is one sharp spike; flams and loose playing spread it out. It's measured from one mixed recording, so treat it as a trend indicator rather than an exact number.</dd>
           </dl>
+        </details>
+
+        <details class="card settings">
+          <summary>Settings</summary>
+          <div class="settings-grid">
+            <div class="setting">
+              <span class="setting-label">Tempo reads double or half the real tempo?</span>
+              <div class="seg" role="group" aria-label="Tempo octave">
+                <button id="resHalf" class="btn btn-small" type="button" title="Readings are double the real tempo">÷2</button>
+                <button id="resDouble" class="btn btn-small" type="button" title="Readings are half the real tempo">×2</button>
+              </div>
+              <small>Re-analyzes the recording around half or double the current tempo. Your section edits are kept.</small>
+            </div>
+          </div>
         </details>
 
         <div class="actions">
