@@ -85,7 +85,8 @@ a { color: var(--accent); }
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
 }
-.brand { font-weight: 650; color: var(--text-primary); text-decoration: none; }
+.brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 650; color: var(--text-primary); text-decoration: none; }
+.brand img { display: block; flex: none; }
 .tabs { display: flex; gap: 4px; }
 .tabs a {
   padding: 6px 12px; border-radius: 999px; color: var(--text-secondary); text-decoration: none;

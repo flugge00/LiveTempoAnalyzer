@@ -1,8 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <rect width="32" height="32" rx="7" fill="#141413"/>
-  <path d="M13,8 L19,8 L23,27 L9,27 L13,8" fill="none" stroke="#eceae3" stroke-width="1.7" stroke-linejoin="round"/>
-  <line x1="7" y1="27.5" x2="25" y2="27.5" stroke="#eceae3" stroke-width="1.7" stroke-linecap="round"/>
-  <circle cx="16" cy="8" r="1.6" fill="#eceae3"/>
-  <line x1="16" y1="10.2" x2="21" y2="24" stroke="#4a9bf0" stroke-width="1.7" stroke-linecap="round"/>
-  <circle cx="19.3" cy="18.8" r="1.9" fill="#4a9bf0"/>
+  <line x1="7" y1="13" x2="7" y2="19" stroke="#8a8880" stroke-width="2.4" stroke-linecap="round"/>
+  <line x1="11.5" y1="10" x2="11.5" y2="22" stroke="#8a8880" stroke-width="2.4" stroke-linecap="round"/>
+  <line x1="16" y1="8" x2="16" y2="24" stroke="#8a8880" stroke-width="2.4" stroke-linecap="round"/>
+  <line x1="20.5" y1="11" x2="20.5" y2="21" stroke="#8a8880" stroke-width="2.4" stroke-linecap="round"/>
+  <line x1="25" y1="13" x2="25" y2="19" stroke="#8a8880" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M5,16 C8.9,9.3 12.1,9.3 16,16 C19.9,22.7 23.1,22.7 27,16" fill="none" stroke="#4a9bf0" stroke-width="2.6" stroke-linecap="round"/>
 </svg>

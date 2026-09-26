@@ -51,7 +51,7 @@
 ## Small follow-ups (done, 2026-09-25)
 
 - [x] Target tempo moved next to Count in; ÷2/×2 moved into Settings (rarely needed); count-in up to 5 bars
-- [x] Metronome icon (needle off-centre = drift, matching the app's whole premise) as favicon (SVG) and PWA icons
+- [x] Icon (waveform bars with the blue tempo wave through them: recording in, tempo curve out) as favicon (SVG), PWA icons and header logo
 - [x] Dark/light toggle in the header, remembered per device; follows the OS until then
 
 ## Workflow: one recording per song (2026-09-25)

@@ -1,9 +1,8 @@
 """Draws the app icon as PNGs and an SVG favicon. Standard library only.
 
-A metronome with its needle tilted off-centre: the app's whole premise is
-"is the needle drifting", so the icon draws that directly instead of an
-abstract shape. Both the SVG and the PNGs are rendered from the same 32x32
-coordinates, so they match.
+An audio waveform (muted bars) with a blue wave running through it: the
+recording goes in, the tempo curve comes out. Both the SVG and the PNGs are
+rendered from the same 32x32 coordinates, so they match.
 
     python tools/make-icons.py      -> icons/*.png, icons/icon.svg
 """
@@ -12,19 +11,20 @@ import struct
 import zlib
 from pathlib import Path
 
-BG = (0x14, 0x14, 0x13)      # icon background (near-black, like the app page)
-FRAME = (0xEC, 0xEA, 0xE3)   # metronome body (off-white)
-NEEDLE = (0x4A, 0x9B, 0xF0)  # the tempo needle: the app's accent blue
+BG = (0x14, 0x14, 0x13)    # icon background (near-black, like the app page)
+BARS = (0x8A, 0x88, 0x80)  # waveform bars (muted, so the wave reads on top)
+WAVE = (0x4A, 0x9B, 0xF0)  # the tempo wave: the app's accent blue
 
 # 32x32 viewBox, shared by the SVG and the raster renderer below.
-BODY = [(13, 8), (19, 8), (23, 27), (9, 27), (13, 8)]  # closed outline
-BASE = [(7, 27.5), (25, 27.5)]
-PIVOT = (16, 8)
-PIVOT_R = 1.6
-NEEDLE_LINE = [(16, 10.2), (21, 24)]  # tilted off-centre: the drift
-WEIGHT = (19.3, 18.8)
-WEIGHT_R = 1.9
-STROKE_W = 1.7
+BAR_HALF_HEIGHTS = [(7, 3), (11.5, 6), (16, 8), (20.5, 5), (25, 3)]  # (x, half height) around y=16
+BAR_LINES = [[(x, 16 - h), (x, 16 + h)] for x, h in BAR_HALF_HEIGHTS]
+BAR_W = 2.4
+# One sine period as two cubic halves; controls at 4/3 of the amplitude (5) give a round crest.
+WAVE_CUBICS = [
+    [(5, 16), (8.9, 9.3), (12.1, 9.3), (16, 16)],
+    [(16, 16), (19.9, 22.7), (23.1, 22.7), (27, 16)],
+]
+WAVE_W = 2.6
 
 OUT = Path(__file__).resolve().parent.parent / "icons"
 
@@ -33,15 +33,33 @@ def hexcolor(c):
     return "#%02x%02x%02x" % c
 
 
+def wave_d():
+    d = "M%g,%g" % WAVE_CUBICS[0][0]
+    for _, c1, c2, p in WAVE_CUBICS:
+        d += " C%g,%g %g,%g %g,%g" % (*c1, *c2, *p)
+    return d
+
+
+def wave_points(steps=24):
+    """The wave flattened to a polyline, for the raster renderer."""
+    pts = [WAVE_CUBICS[0][0]]
+    for p0, c1, c2, p1 in WAVE_CUBICS:
+        for k in range(1, steps + 1):
+            t = k / steps
+            u = 1 - t
+            pts.append(tuple(u ** 3 * p0[i] + 3 * u * u * t * c1[i] + 3 * u * t * t * c2[i] + t ** 3 * p1[i]
+                             for i in range(2)))
+    return pts
+
+
 def write_svg(path, radius=7):
-    p = " ".join(f"L{x},{y}" if i else f"M{x},{y}" for i, (x, y) in enumerate(BODY))
+    bars = "\n".join(
+        f'  <line x1="{a[0]}" y1="{a[1]}" x2="{b[0]}" y2="{b[1]}" stroke="{hexcolor(BARS)}" stroke-width="{BAR_W}" stroke-linecap="round"/>'
+        for a, b in BAR_LINES)
     path.write_text(f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <rect width="32" height="32" rx="{radius}" fill="{hexcolor(BG)}"/>
-  <path d="{p}" fill="none" stroke="{hexcolor(FRAME)}" stroke-width="{STROKE_W}" stroke-linejoin="round"/>
-  <line x1="{BASE[0][0]}" y1="{BASE[0][1]}" x2="{BASE[1][0]}" y2="{BASE[1][1]}" stroke="{hexcolor(FRAME)}" stroke-width="{STROKE_W}" stroke-linecap="round"/>
-  <circle cx="{PIVOT[0]}" cy="{PIVOT[1]}" r="{PIVOT_R}" fill="{hexcolor(FRAME)}"/>
-  <line x1="{NEEDLE_LINE[0][0]}" y1="{NEEDLE_LINE[0][1]}" x2="{NEEDLE_LINE[1][0]}" y2="{NEEDLE_LINE[1][1]}" stroke="{hexcolor(NEEDLE)}" stroke-width="{STROKE_W}" stroke-linecap="round"/>
-  <circle cx="{WEIGHT[0]}" cy="{WEIGHT[1]}" r="{WEIGHT_R}" fill="{hexcolor(NEEDLE)}"/>
+{bars}
+  <path d="{wave_d()}" fill="none" stroke="{hexcolor(WAVE)}" stroke-width="{WAVE_W}" stroke-linecap="round"/>
 </svg>
 ''', encoding="utf-8")
 
@@ -57,24 +75,28 @@ def polyline_dist(px, py, pts):
 
 
 def render(size, *, glyph_scale=1.0, radius=7 / 32, full_bleed=False, ss=4):
-    """RGBA rows. glyph_scale < 1 shrinks the metronome towards the centre (maskable safe zone)."""
+    """RGBA rows. glyph_scale < 1 shrinks the glyph towards the centre (maskable safe zone)."""
     unit = size / 32
-    stroke = STROKE_W * unit * glyph_scale / 2
+    bar_half, wave_half = BAR_W * unit * glyph_scale / 2, WAVE_W * unit * glyph_scale / 2
     cx = cy = 16 * unit
 
     def pt(x, y):
         return (cx + (x - 16) * unit * glyph_scale, cy + (y - 16) * unit * glyph_scale)
 
-    body, base, needle = [pt(*p) for p in BODY], [pt(*p) for p in BASE], [pt(*p) for p in NEEDLE_LINE]
-    pivot, weight = pt(*PIVOT), pt(*WEIGHT)
-    pivot_r, weight_r = PIVOT_R * unit * glyph_scale, WEIGHT_R * unit * glyph_scale
+    bars = [[pt(*p) for p in line] for line in BAR_LINES]
+    wave = [pt(*p) for p in wave_points()]
     r = radius * size
+    reach = math.sqrt(2) / 2  # half a pixel diagonal: beyond this, no subsample can be covered
 
     rows = []
     for j in range(size):
         row = bytearray()
         for i in range(size):
-            cov_bg = cov_frame = cov_needle = 0.0
+            # Only supersample the shapes that come near this pixel; the rest is plain background.
+            pc = (i + 0.5, j + 0.5)
+            near_bars = [b for b in bars if polyline_dist(*pc, b) <= bar_half + reach]
+            near_wave = polyline_dist(*pc, wave) <= wave_half + reach
+            cov_bg = cov_bars = cov_wave = 0.0
             for sj in range(ss):
                 for si in range(ss):
                     x, y = i + (si + 0.5) / ss, j + (sj + 0.5) / ss
@@ -83,15 +105,14 @@ def render(size, *, glyph_scale=1.0, radius=7 / 32, full_bleed=False, ss=4):
                         if math.hypot(x - cxg, y - cyg) > r:
                             continue
                     cov_bg += 1
-                    if (polyline_dist(x, y, body) <= stroke or polyline_dist(x, y, base) <= stroke
-                            or math.hypot(x - pivot[0], y - pivot[1]) <= pivot_r):
-                        cov_frame += 1
-                    elif polyline_dist(x, y, needle) <= stroke or math.hypot(x - weight[0], y - weight[1]) <= weight_r:
-                        cov_needle += 1
+                    if near_wave and polyline_dist(x, y, wave) <= wave_half:
+                        cov_wave += 1  # the wave is drawn on top of the bars
+                    elif any(polyline_dist(x, y, b) <= bar_half for b in near_bars):
+                        cov_bars += 1
             n = ss * ss
             a = cov_bg / n
-            lf, ln = (cov_frame / cov_bg, cov_needle / cov_bg) if cov_bg else (0, 0)
-            rgb = [round(BG[c] * (1 - lf - ln) + FRAME[c] * lf + NEEDLE[c] * ln) for c in range(3)]
+            lb, lw = (cov_bars / cov_bg, cov_wave / cov_bg) if cov_bg else (0, 0)
+            rgb = [round(BG[c] * (1 - lb - lw) + BARS[c] * lb + WAVE[c] * lw) for c in range(3)]
             row += bytes(rgb + [round(255 * a)])
         rows.append(bytes(row))
     return rows
