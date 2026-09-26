@@ -7,6 +7,7 @@
 //   settings: { beatsPerBar, barPhase: 'auto' | number, targetBpm },
 //   sections?: [{start, end, label, name, take}],  // user-edited sections (replace analysis.sections)
 //   sectionNames?: { [index]: string },      // older sessions: renames of the automatic sections
+//   trim?: {start, end},                     // only this part counts in the numbers (see analysis/trim.js)
 //   audio?: Blob, fileName?: string,
 //   modified: ms,                            // last change; decides which copy wins on import
 // }

@@ -5,6 +5,9 @@ import { writeFileSync, readFileSync, readdirSync, statSync, existsSync } from '
 import { crc32, makeZip, readZip } from '../js/store/zip.js';
 import { exportSessions, readSessionsFile, importSessions } from '../js/store/share.js';
 import { split, joinNext, moveEdge, canSplit, effectiveSections, colorIndexes } from '../js/analysis/sections.js';
+import { splitSession, suggestSongBreak, partHint } from '../js/analysis/split.js';
+import { encodeWav } from '../js/audio/wav.js';
+import { sessionReport, trimAnalysis, trimOf, normaliseTrim } from '../js/analysis/trim.js';
 import { drumTrack, songWithSections } from '../js/analysis/demo-synth.js';
 import { onsetEnvelope } from '../js/dsp/onset.js';
 import { TempoModel, tempoCurve } from '../js/dsp/tempo.js';
@@ -85,6 +88,55 @@ async function appTests() {
     const legacy = effectiveSections({ analysis: { sections: [{ start: 0, end: 10, label: 'A', name: 'Intro' }, { start: 10, end: 20, label: 'B', name: 'Part B' }] }, sectionNames: { 1: 'Chorus 1' } });
     const colors = colorIndexes([{ name: 'Verse' }, { name: 'Chorus 1' }, { name: 'Verse 2' }, { name: 'chorus' }]);
     check('older renames and colour groups', legacy[1].name === 'Chorus 1' && colors.join() === '0,1,0,1', colors.join());
+  }
+
+  // splitting a recording into two songs
+  {
+    const s = {
+      id: 'orig', name: 'Brassfire + Round It Goes', created: 1e6, modified: 2e6, kind: 'live', duration: 100, fileName: 'medley.mp3',
+      live: { points: [{ t: 10, bpm: 140, c: 0.4 }, { t: 59.9, bpm: 138, c: 0.3 }, { t: 60, bpm: 130, c: 0.4 }, { t: 90, bpm: 131, c: 0.5 }], markers: [{ t: 70, label: 'm' }] },
+      settings: { beatsPerBar: 4, barPhase: 'auto', targetBpm: 145 },
+      sections: [{ start: 0, end: 40, name: 'Verse' }, { start: 40, end: 61, name: 'Chorus' }, { start: 61, end: 100, name: 'Intro' }],
+      trim: { start: 5, end: 90 },
+      audio: new Blob([new Uint8Array(10)]),
+    };
+    const [a, b] = splitSession(s, 60, { ids: ['p1', 'p2'], names: ['Brassfire', ''] });
+    check('split session: readings, markers and sections cut at the split',
+      a.name === 'Brassfire' && b.name === 'Brassfire + Round It Goes (2)' && a.id === 'p1' && b.created === 1e6 + 60000
+      && a.duration === 60 && b.duration === 40 && !a.audio && !a.analysis && a.modified == null
+      && a.live.points.length === 2 && b.live.points.map((p) => p.t).join() === '0,30' && b.live.markers[0].t === 10
+      && a.sections.length === 2 && a.sections[1].end === 60 && b.sections.length === 1 && b.sections[0].start === 1 && b.sections[0].end === 40
+      && a.settings.targetBpm === 145 && b.settings.targetBpm === null && s.settings.targetBpm === 145 && b.fileName === 'medley (2).wav'
+      && a.trim.start === 5 && a.trim.end === 60 && b.trim.start === 0 && b.trim.end === 30,
+      `${a.name} / ${b.name}; sections ${a.sections.length} + ${b.sections.length}`);
+
+    // a song at ~140 with a weak break from 55 to 65 s, then a song at ~100
+    const t = Array.from({ length: 480 }, (_, i) => i * 0.25);
+    const curve = { t, bpm: t.map((x) => (x < 55 ? 140 : x < 65 ? null : 100)), conf: t.map((x) => (x < 55 || x >= 65 ? 0.4 : 0)) };
+    const an = { duration: 120, curve, sections: [], options: { expectedBpm: 140 } };
+    const brk = suggestSongBreak(an);
+    check('suggested song break is in the gap; the tempo hint goes to the part it fits',
+      brk > 57 && brk < 63 && partHint(an, 0, brk) === 140 && partHint(an, brk, Infinity) === undefined, `break at ${brk}`);
+
+    const wav = new Uint8Array(await encodeWav(Float32Array.from([0, 0.5, -1, 2]), 44100).arrayBuffer());
+    const dv = new DataView(wav.buffer);
+    check('WAV encoding', wav.length === 52 && String.fromCharCode(...wav.slice(8, 12)) === 'WAVE' && dv.getUint32(24, true) === 44100
+      && dv.getInt16(46, true) === 16383 && dv.getInt16(48, true) === -32768 && dv.getInt16(50, true) === 32767);
+  }
+
+  // trimming off a slowing, free-time ending
+  {
+    const sr = 22050;
+    const { samples } = drumTrack({ sr, duration: 54, seed: 5, bpm: (t) => (t < 40 ? 120 : 120 - (t - 40) * 3) });
+    const analysis = analyzeAudio(samples, sr, {});
+    const full = sessionReport({ analysis, settings: {} });
+    const trimmed = sessionReport({ analysis, settings: {}, trim: { start: 0, end: 40 } });
+    const ta = trimAnalysis(analysis, { start: 0, end: 40 });
+    const aligned = ta.beats.length === ta.spreadMs.length && ta.beats.length === ta.accent.onset.length && ta.beats.length < analysis.beats.length;
+    check('trimmed-off ending leaves the numbers',
+      aligned && Math.abs(trimmed.summary.drift) < 1 && Math.abs(trimmed.summary.end - 120) < 1 && full.summary.drift < -5
+      && trimmed.bars.every((b) => b.end <= 40.5) && normaliseTrim({ start: 0, end: 54 }, 54) === null && trimOf({ analysis, trim: { start: 0.001, end: 60 } }) === null,
+      `drift ${full.summary.drift.toFixed(1)} → ${trimmed.summary.drift.toFixed(1)} BPM, end ${full.summary.end.toFixed(1)} → ${trimmed.summary.end.toFixed(1)}`);
   }
 
   // the service worker must cache every app file, and only files that exist
@@ -204,6 +256,9 @@ async function main() {
     const names = a.sections.map((s) => s.name).join(', ');
     const repeatsMatch = a.sections.length >= 6 && labels[0] === labels[2] && labels[1] === labels[3] && labels[1] === labels[5];
     check('repeated sections share labels', repeatsMatch, `${labels} → ${names}`);
+    // sections between the first and last are whole phrases (4/8/16 bars here)
+    const bars = a.sections.map((s) => a.beats.filter((t) => t >= s.start - 0.01 && t < s.end - 0.01).length / 4);
+    check('sections are whole phrases', bars.slice(1, -1).every((b) => b % 4 === 0), `${bars.join(', ')} bars`);
   }
 
   // 8. a stray beat at the end of a recording must not create a tempo outlier
@@ -233,6 +288,32 @@ async function main() {
     const live = liveEstimate(samples, sr);
     const lwrong = live.filter((r) => r.bpm != null && r.t > 8 && Math.abs(r.bpm - 128) > 3).length;
     check('live: half-time sections keep full tempo', lwrong === 0, `${lwrong}/${live.length} readings off by >3 BPM`);
+  }
+
+  // 9b. songs that are mostly half-time, or start in it, are still counted at the full tempo
+  {
+    const inAny = (ranges) => (t) => ranges.some(([a, b]) => t > a && t < b);
+    const cases = [
+      { bpm: 128, half: [[0, 30], [45, 75], [90, 115]], dur: 120, what: '128, 70% half-time from the start' },
+      { bpm: 170, half: [[25, 55], [80, 105]], dur: 110, what: '170, half-time sections' },
+      { bpm: 150, half: [[0, 35], [55, 90]], dur: 110, what: '150, 60% half-time with hi-hats', hats: true },
+    ];
+    for (const c of cases) {
+      const { samples } = drumTrack({ sr: 22050, duration: c.dur, bpm: c.bpm, eighths: true, halfTime: inAny(c.half), halfTimeHats: c.hats, seed: 21, jitterMs: 4 });
+      const a = analyzeAudio(samples, 22050, { sections: false });
+      const off = (b) => b != null && Math.abs(b - c.bpm) > 3;
+      const wrong = a.curve.bpm.filter(off).length;
+      // live: once the band has played full time for a few seconds, the whole take is corrected
+      const live = liveEstimate(samples, 22050);
+      const lwrong = live.filter((r) => r.t > 8 && off(r.bpm)).length;
+      check(`half-time counted at full tempo: ${c.what}`, wrong === 0 && lwrong === 0, `offline ${wrong}/${a.curve.bpm.length}, live ${lwrong}/${live.length} readings off`);
+    }
+    // and a slow song is not doubled because of its hi-hats
+    const { samples } = drumTrack({ sr: 22050, duration: 60, bpm: 75, eighths: true, seed: 21, jitterMs: 4 });
+    const a = analyzeAudio(samples, 22050, { sections: false });
+    const live = liveEstimate(samples, 22050);
+    const wrong = a.curve.bpm.filter((b) => b != null && Math.abs(b - 75) > 2).length + live.filter((r) => r.t > 8 && r.bpm != null && Math.abs(r.bpm - 75) > 2).length;
+    check('slow song (75 BPM) is not doubled', wrong === 0, `${wrong} readings off`);
   }
 
   // 10. a real tempo change without a pause (medley) must be followed, not suppressed

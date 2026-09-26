@@ -89,6 +89,7 @@ const plural = (a) => (a.n > 1 ? a.name + (/s$/.test(a.name) ? 'es' : 's') : a.n
 
 export function fmtTime(s) {
   if (s == null || !isFinite(s)) return '–';
+  s = Math.max(0, s); // the first beat can sit a few ms before the recording starts
   const m = Math.floor(s / 60), ss = Math.floor(s % 60);
   return `${m}:${String(ss).padStart(2, '0')}`;
 }

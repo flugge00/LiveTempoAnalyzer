@@ -10,6 +10,7 @@ function rng(seed) {
  *   sr, duration, bpm: number | (t)=>number, jitterMs (random timing error per hit),
  *   noise (background noise amplitude), eighths (add hi-hat 8ths), seed,
  *   halfTime: (t)=>boolean  play a half-time feel at these times (same tempo, sparser hits)
+ *   halfTimeHats: keep the hi-hat eighths going through the half-time parts
  * @returns {{samples: Float32Array, beats: number[]}}
  */
 export function drumTrack(o) {
@@ -26,6 +27,7 @@ export function drumTrack(o) {
     if (o.halfTime?.(t)) {
       // half-time feel: kick on 1, snare on 3, nothing in between (sounds like half the tempo)
       if (beat % 2 === 0) hit(out, sr, t + jit(), beat % 4 === 0 ? 'kick' : 'snare', rand);
+      if (o.halfTimeHats) { hit(out, sr, t + jit(), 'hat', rand); hit(out, sr, t + period / 2 + jit(), 'hat', rand); }
     } else {
       // kick on 1 & 3, snare on 2 & 4
       hit(out, sr, t + jit(), beat % 2 === 0 ? 'kick' : 'snare', rand);

@@ -5,32 +5,45 @@
 // aligned similarity into letters (A, B, C...) -> heuristic names
 // (Intro / Verse / Chorus / Bridge / Outro). Names are best guesses; the UI
 // lets you rename them.
+//
+// Boundaries are chosen for the whole song at once (dynamic programming), not
+// one peak at a time: a boundary has to be a clear change, sit on a downbeat,
+// and leave sections of usual phrase lengths (8, 12, 16, 24, 32 bars) on both
+// sides. An odd length (7 or 9 bars, a 4-bar break) still wins when the change
+// is clear enough.
 
 /**
  * @param {object} feats {chroma: Float32Array[], timbre: Float32Array[], rms: number[], decim}
  *   per-feature-frame arrays; one feature frame covers `decim` envelope frames
  * @param {number[]} beatFrames beat positions in envelope frames
- * @param {object} o {kernelBeats=16, minBeats=12, sensitivity=0.5}
+ * @param {object} o {kernelBeats=16, sensitivity=0.5, beatsPerBar=4,
+ *   barPos: position in the bar per beat (0 = downbeat, -1 = unknown), if known}
  * @returns {{startBeat:number, endBeat:number, label:string, name:string, energy:number}[]}
  */
 export function segmentSong(feats, beatFrames, o = {}) {
   const L = o.kernelBeats ?? 16;
-  const minBeats = o.minBeats ?? 12;
   const B = beatFrames.length;
   if (B < 2 * L) return B ? [{ startBeat: 0, endBeat: B, label: 'A', name: 'Song', energy: 1 }] : [];
 
   const { vecs, energy } = beatFeatures(feats, beatFrames);
   const S = selfSimilarity(vecs);
   const nov = novelty(S, L);
-  const bounds = pickBoundaries(nov, minBeats, o.sensitivity ?? 0.5);
+  const bounds = phraseBoundaries(nov, o.barPos, o.beatsPerBar ?? 4);
+  const found = [];
+  for (let i = 0; i < bounds.length - 1; i++) found.push({ startBeat: bounds[i], endBeat: bounds[i + 1] });
+  labelSegments(found, S, o.sensitivity ?? 0.5);
+  // the same part twice in a row is one longer section (two 8-bar halves of a verse)
   const segs = [];
-  for (let i = 0; i < bounds.length - 1; i++) segs.push({ startBeat: bounds[i], endBeat: bounds[i + 1] });
+  for (const s of found) {
+    const p = segs[segs.length - 1];
+    if (p && p.label === s.label) p.endBeat = s.endBeat;
+    else segs.push(s);
+  }
   for (const s of segs) {
     let e = 0;
     for (let b = s.startBeat; b < s.endBeat; b++) e += energy[b];
     s.energy = e / (s.endBeat - s.startBeat);
   }
-  labelSegments(segs, S, o.sensitivity ?? 0.5);
   nameSegments(segs);
   return segs;
 }
@@ -116,25 +129,59 @@ function novelty(S, L) {
   return nov;
 }
 
-function pickBoundaries(nov, minBeats, sensitivity) {
-  const B = nov.length;
-  const vals = Array.from(nov);
-  const m = vals.reduce((s, v) => s + v, 0) / B;
-  const s = Math.sqrt(vals.reduce((a, v) => a + (v - m) ** 2, 0) / B);
-  const thr = m + (1 - sensitivity) * s;
-  const cands = [];
-  const w = Math.max(2, minBeats >> 1);
-  for (let i = minBeats; i < B - minBeats; i++) {
-    if (nov[i] < thr) continue;
-    let isMax = true;
-    for (let j = Math.max(0, i - w); j <= Math.min(B - 1, i + w); j++) if (nov[j] > nov[i]) { isMax = false; break; }
-    if (isMax) cands.push(i);
+// Usual section lengths in bars, with what an unusual one costs.
+const PHRASES = [[8, 0], [16, 0], [12, 0.2], [24, 0.2], [32, 0.2], [4, 0.7], [20, 0.6], [6, 1], [28, 0.9], [40, 0.8], [48, 0.8]];
+const OFF_BY_BAR = 0.6;    // cost per bar away from a usual length (a 7- or 9-bar part)
+const ODD_LENGTH = 2.5;    // cost of a length that is no usual one
+const BOUNDARY_MIN = 0.75; // novelty (in units of its 90th percentile) a boundary must beat
+const NOVELTY_WEIGHT = 2;
+const OFF_DOWNBEAT = 0.5;  // cost of a boundary that isn't on a downbeat
+const FIRST_WEIGHT = 0.5;  // the intro and the end are counted from wherever the take
+const LAST_WEIGHT = 0.25;  // starts and stops, so their length matters less
+
+function phraseCost(bars) {
+  let c = ODD_LENGTH;
+  for (const [n, base] of PHRASES) {
+    const d = Math.abs(bars - n);
+    if (d <= 2) c = Math.min(c, base + OFF_BY_BAR * d * (d > 1 ? 1.5 : 1));
   }
-  // strongest first, enforcing minimum segment length
-  cands.sort((a, b) => nov[b] - nov[a]);
-  const chosen = [];
-  for (const c of cands) if (chosen.every((x) => Math.abs(x - c) >= minBeats)) chosen.push(c);
-  return [0, ...chosen.sort((a, b) => a - b), B];
+  return c;
+}
+
+/**
+ * Best boundaries for the whole song: maximises the novelty at the boundaries
+ * minus the phrase-length cost of the sections between them.
+ * @returns {number[]} beat indices, starting with 0 and ending with B
+ */
+function phraseBoundaries(nov, barPos, bpb) {
+  const B = nov.length;
+  const sorted = Array.from(nov).sort((a, b) => a - b);
+  const scale = sorted[Math.floor(B * 0.9)] || 1;
+  // The 4-beat look-ahead in the features makes novelty peak ~1.5 beats before
+  // the change, so a boundary at beat j is scored with the novelty just before it.
+  const gain = new Float64Array(B);
+  for (let j = 2; j < B; j++) {
+    const v = Math.max(nov[j], nov[j - 1], nov[j - 2]) / scale;
+    gain[j] = NOVELTY_WEIGHT * (v - BOUNDARY_MIN) - (barPos && barPos[j] !== 0 ? OFF_DOWNBEAT : 0);
+  }
+  const firstDown = barPos ? Math.max(0, Array.prototype.indexOf.call(barPos, 0)) : 0;
+  const minLen = 3 * bpb, maxLen = 64 * bpb;
+  const best = new Float64Array(B + 1).fill(-Infinity), from = new Int32Array(B + 1);
+  best[0] = 0;
+  for (let j = minLen; j <= B; j++) {
+    if (j < B && j > B - minLen) continue;
+    for (let i = Math.max(0, j - maxLen); i <= j - minLen; i++) {
+      if (best[i] === -Infinity) continue;
+      let cost;
+      if (i === 0) cost = FIRST_WEIGHT * phraseCost((j - Math.min(firstDown, j - bpb)) / bpb);
+      else cost = (j === B ? LAST_WEIGHT : 1) * phraseCost((j - i) / bpb);
+      const s = best[i] - cost + (j < B ? gain[j] : 0);
+      if (s > best[j]) { best[j] = s; from[j] = i; }
+    }
+  }
+  const out = [B];
+  for (let j = B; j > 0; j = from[j]) out.unshift(from[j]);
+  return out;
 }
 
 /** Similarity of two segments: mean of the SSM along their aligned diagonal (best of small offsets). */

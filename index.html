@@ -163,6 +163,9 @@
             <span id="resTime" class="timer small"></span>
             <span id="resBeat" class="beat-counter" title="Beat in the bar" hidden></span>
             <span class="sep"></span>
+            <button id="resTrimBtn" class="btn" type="button" aria-pressed="false" title="Leave out a false start or a free-time ending">✂ Trim</button>
+            <span id="resTrim" class="trim-chip" hidden></span>
+            <span class="sep"></span>
             <label>Beats per bar <select id="resBpb"></select></label>
             <label>Bar starts on beat <select id="resPhase"></select></label>
             <span class="sep"></span>
@@ -174,7 +177,35 @@
           </div>
           <div class="legend" id="resLegend"></div>
           <div id="resChart" class="chart-box tall"></div>
-          <p class="muted small hint">Drag to pan, scroll or pinch to zoom, double-click to fit. Click to play from that point. Drag the handles on the coloured strip to move a section boundary.</p>
+          <p class="muted small hint">Drag to pan, scroll or pinch to zoom, double-click to fit. Click to play from that point. Drag the handles on the coloured strip to move a section boundary. Press <b>Trim</b> to leave out a false start or a free-time ending.</p>
+        </div>
+
+        <div class="card trim-panel" id="trimPanel" hidden>
+          <div class="card-head">
+            <h3>Trim: choose the part that counts</h3>
+            <span id="trimRange" class="trim-range"></span>
+          </div>
+          <p class="muted small">Drag the <b>Start</b> and <b>End</b> handles on the chart. Or press Play, stop where the song really starts or ends, and use the buttons. The greyed parts stay in the recording but don't count in any of the numbers.</p>
+          <div class="actions">
+            <button id="trimStartHere" class="btn" type="button">Start at playhead</button>
+            <button id="trimEndHere" class="btn" type="button">End at playhead</button>
+            <button id="trimReset" class="btn" type="button">Use whole recording</button>
+            <span class="grow"></span>
+            <button id="trimDone" class="btn btn-primary" type="button">Done</button>
+          </div>
+        </div>
+
+        <div class="card" id="splitPanel" hidden>
+          <h3>Split into two songs</h3>
+          <p class="muted small">For two songs played straight after each other. The second song starts at the playhead, now at <b id="splitAt">–</b>: click the chart to move it, and press Play to check by ear. Each song is analyzed on its own, and the two replace this recording.</p>
+          <div class="split-names">
+            <label class="song-field">First song <input id="splitName1" type="text" list="songList" autocomplete="off"></label>
+            <label class="song-field">Second song <input id="splitName2" type="text" list="songList" autocomplete="off"></label>
+          </div>
+          <div class="actions">
+            <button id="splitGo" class="btn btn-primary" type="button">Split</button>
+            <button id="splitCancel" class="btn" type="button">Cancel</button>
+          </div>
         </div>
 
         <div class="grid-2">
@@ -229,6 +260,7 @@
         <div class="actions">
           <button id="resExport" class="btn" type="button" title="One .zip with the recording and the analysis. Import it on another device (Sessions → Import).">Export for sharing</button>
           <button id="resExportCsv" class="btn" type="button">Export CSV</button>
+          <button id="resSplit" class="btn" type="button" title="The recording holds two songs played straight after each other">Split into two songs…</button>
           <button id="resNew" class="btn" type="button">Analyze another file</button>
         </div>
         <audio id="resAudio" preload="auto" hidden></audio>

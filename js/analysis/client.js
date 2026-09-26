@@ -2,11 +2,11 @@
 
 const ANALYSIS_SR = 22050; // plenty for rhythm and harmony; halves memory on long recordings
 
-/** Decode any browser-supported audio (mp3, wav, m4a, webm...) to mono at ANALYSIS_SR. */
-export async function decodeToMono(blob) {
+/** Decode any browser-supported audio (mp3, wav, m4a, webm...) to mono, at ANALYSIS_SR unless told otherwise. */
+export async function decodeToMono(blob, sampleRate = ANALYSIS_SR) {
   const buf = await blob.arrayBuffer();
   const Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-  const ctx = new Offline(1, 1, ANALYSIS_SR); // decodeAudioData resamples to the context rate
+  const ctx = new Offline(1, 1, sampleRate); // decodeAudioData resamples to the context rate
   const audio = await new Promise((resolve, reject) => {
     const p = ctx.decodeAudioData(buf, resolve, reject);
     if (p && p.then) p.then(resolve, reject);

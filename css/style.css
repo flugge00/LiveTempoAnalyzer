@@ -192,8 +192,11 @@ label { color: var(--text-secondary); font-size: 0.9rem; }
 .settings summary, details.card summary { cursor: pointer; font-weight: 600; }
 .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 12px; }
 .settings-grid label { display: flex; flex-direction: column; gap: 4px; }
+/* never squeeze a field below its own height (clipped the select text on phones) */
+.settings-grid label > * { flex-shrink: 0; }
 .settings-grid label.check { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
-.settings-grid small { color: var(--text-muted); flex-basis: 100%; }
+.settings-grid small { color: var(--text-muted); }
+.settings-grid label.check small { flex-basis: 100%; }
 .setting { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .setting-label { color: var(--text-secondary); font-size: 0.9rem; }
 .setting small { color: var(--text-muted); font-size: 0.8rem; }
@@ -296,6 +299,14 @@ table.data input[type="checkbox"] { width: 18px; height: 18px; accent-color: var
 .explain dd { margin: 0; color: var(--text-secondary); }
 
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.trim-chip { color: var(--text-secondary); font-size: 0.9rem; }
+#resTrimBtn[aria-pressed="true"] { background: var(--accent); border-color: transparent; color: var(--accent-ink); }
+.trim-panel { border-color: var(--accent); }
+.trim-range { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.actions .grow { flex: 1 1 auto; }
+tr.trimmed td { opacity: 0.45; }
+.split-names { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 12px 0; }
+.split-names .song-field { flex: 1 1 240px; }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);

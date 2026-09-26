@@ -2,7 +2,9 @@
 // Features: multiple series (line / dots) with gaps, song-section strip,
 // markers, target line + tolerance band, level lane, playhead, live "follow"
 // mode, wheel/drag/pinch zoom & pan, crosshair tooltip, click-to-seek,
-// draggable section boundaries (option sectionEdit: {snap(t)}, emits 'sections').
+// draggable section boundaries (option sectionEdit: {snap(t)}, emits 'sections'),
+// trim handles at both ends in trim mode (option trimEdit: {snap(t), minSec},
+// setTrimMode(), data.trim; emits 'trimming' while dragging and 'trim' on release).
 
 import { fmtTime } from '../analysis/report.js';
 import { moveEdge } from '../analysis/sections.js';
@@ -22,7 +24,7 @@ export class TimeChart extends EventTarget {
     this.tip.hidden = true;
     el.append(this.canvas, this.tip);
     this.ctx = this.canvas.getContext('2d');
-    this.data = { series: [], sections: [], markers: [], reference: null, levels: null, duration: 0 };
+    this.data = { series: [], sections: [], markers: [], reference: null, levels: null, duration: 0, trim: null };
     this.view = null;        // [x0, x1] seconds, null = auto
     this.follow = o.follow ?? null; // {windowSec} for live
     this.playhead = null;
@@ -280,6 +282,53 @@ export class TimeChart extends EventTarget {
       ctx.fillText(m.label, x + 4, P.y + 10);
     }
 
+    // trimmed-off parts greyed out; in trim mode, the handles
+    const tr = this._trim();
+    if (tr) {
+      const top = PAD.top, bot = this.h - PAD.bottom;
+      ctx.fillStyle = C.surface; ctx.globalAlpha = this.trimMode ? 0.8 : 0.72;
+      if (tr.start > x0) ctx.fillRect(P.x, top, Math.min(P.w, X(tr.start) - P.x), bot - top);
+      if (tr.end < x1) { const a = Math.max(P.x, X(tr.end)); ctx.fillRect(a, top, P.x + P.w - a, bot - top); }
+      ctx.globalAlpha = 1;
+      if (!this.trimMode) {
+        // outside trim mode: a dashed line where the part that counts begins / ends
+        ctx.strokeStyle = C.ink2; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+        for (const t of [tr.start, tr.end]) {
+          const x = Math.round(X(t)) + 0.5;
+          if (t <= 0.01 || t >= this.data.duration - 0.01 || x < P.x || x > P.x + P.w) continue;
+          ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bot); ctx.stroke();
+        }
+        ctx.setLineDash([]);
+      } else {
+        const acc = col('--accent'), accInk = col('--accent-ink');
+        for (const side of ['start', 'end']) {
+          const g = this._grip(side, tr);
+          if (!g) continue;
+          const active = this._trimDrag?.side === side;
+          ctx.fillStyle = acc;
+          ctx.fillRect(g.x - 1.5, top, 3, bot - top);
+          // grip: a tab on the inner side of the line, with ridges
+          roundRect(ctx, g.gx - (active ? 2 : 0), g.gy - (active ? 2 : 0), g.gw + (active ? 4 : 0), g.gh + (active ? 4 : 0), 5);
+          ctx.fill();
+          ctx.strokeStyle = accInk; ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          for (const f of [0.3, 0.5, 0.7]) { const lx = Math.round(g.gx + g.gw * f) + 0.5; ctx.moveTo(lx, g.gy + 14); ctx.lineTo(lx, g.gy + g.gh - 14); }
+          ctx.stroke();
+          // label at the top: "Start 0:10" / "End 4:39"
+          const label = `${side === 'start' ? 'Start' : 'End'} ${fmtTime(tr[side])}`;
+          ctx.font = '600 12px system-ui, -apple-system, "Segoe UI", sans-serif';
+          const lw = ctx.measureText(label).width + 14, lh = 20, ly = P.y + 4;
+          const lx = side === 'start' ? Math.min(g.x, P.x + P.w - lw) : Math.max(P.x, g.x - lw);
+          ctx.fillStyle = acc;
+          roundRect(ctx, lx, ly, lw, lh, 4);
+          ctx.fill();
+          ctx.fillStyle = accInk; ctx.textAlign = 'left';
+          ctx.fillText(label, lx + 7, ly + lh / 2);
+          ctx.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+        }
+      }
+    }
+
     // playhead
     if (this.playhead != null && this.playhead >= x0 && this.playhead <= x1) {
       const x = Math.round(X(this.playhead)) + 0.5;
@@ -305,6 +354,48 @@ export class TimeChart extends EventTarget {
       out.push({ i, side: 'end', t: s.end });
     });
     return out;
+  }
+
+  /** Trim mode (option trimEdit): shows the handles and makes them draggable. */
+  setTrimMode(on) {
+    this.trimMode = !!on && !!this.o.trimEdit;
+    this._trimDrag = null;
+    if (this.trimMode) this.view = null; // both ends in sight
+    this.draw();
+    this._emitView();
+  }
+
+  /** The trim being shown: while dragging, the dragged one; in trim mode, the whole range if untrimmed. */
+  _trim() {
+    if (this._trimDrag) return this._trimDrag.cur;
+    if (this.data.trim) return this.data.trim;
+    return this.trimMode && this.data.duration ? { start: 0, end: this.data.duration } : null;
+  }
+
+  /** Geometry of a trim handle: its line x and the grip box (on the inner side), or null if off screen. */
+  _grip(side, tr) {
+    const m = this._map, x = Math.round(m.X(tr[side]));
+    if (x < m.P.x - 1 || x > m.P.x + m.P.w + 1) return null;
+    const gw = 18, gh = Math.min(64, m.P.h - 40);
+    return { x, gw, gh, gx: side === 'start' ? x : x - gw, gy: m.P.y + m.P.h / 2 - gh / 2 + 12 };
+  }
+
+  /** The trim handle ('start' | 'end') under the pointer: anywhere along its line or grip, in trim mode. */
+  _trimAt(clientX, clientY, touch) {
+    const tr = this.trimMode && this._map && this._trim();
+    if (!tr) return null;
+    const r = this.canvas.getBoundingClientRect();
+    const y = clientY - r.top, x = clientX - r.left;
+    if (y < PAD.top - 4 || y > this.h - PAD.bottom + 4) return null;
+    const tol = touch ? 22 : 10;
+    let best = null;
+    for (const side of ['start', 'end']) {
+      const g = this._grip(side, tr);
+      if (!g) continue;
+      const d = Math.abs(g.gx + g.gw / 2 - x) - g.gw / 2; // distance to the line + grip band
+      if (d <= tol && (!best || d < best.d)) best = { side, d };
+    }
+    return best?.side ?? null;
   }
 
   /** The section edge under the pointer, if it's on the section strip. */
@@ -335,6 +426,14 @@ export class TimeChart extends EventTarget {
       c.setPointerCapture(e.pointerId);
       pointers.set(e.pointerId, e.clientX);
       moved = false;
+      // in trim mode the trim handles win over section edges
+      const side = pointers.size === 1 && this._trimAt(e.clientX, e.clientY, e.pointerType !== 'mouse');
+      if (side) {
+        this._trimDrag = { side, orig: this._trim(), cur: { ...this._trim() } };
+        drag = null;
+        this.draw();
+        return;
+      }
       const edge = pointers.size === 1 && this._edgeAt(e.clientX, e.clientY, e.pointerType !== 'mouse');
       if (edge) {
         this._edgeDrag = { edge, orig: this.data.sections };
@@ -358,7 +457,18 @@ export class TimeChart extends EventTarget {
         this.draw();
         return;
       }
-      if (e.pointerType === 'mouse' && !drag) c.style.cursor = this._edgeAt(e.clientX, e.clientY, false) ? 'ew-resize' : '';
+      if (this._trimDrag) {
+        const full = this.data.duration, min = this.o.trimEdit.minSec ?? 10;
+        let t = tAt(e.clientX);
+        t = this.o.trimEdit.snap?.(t) ?? t;
+        const cur = this._trimDrag.cur;
+        if (this._trimDrag.side === 'start') cur.start = t < 0.5 ? 0 : Math.max(0, Math.min(cur.end - min, t));
+        else cur.end = t > full - 0.5 ? full : Math.min(full, Math.max(cur.start + min, t));
+        this._hover(this._map.X(cur[this._trimDrag.side]) + c.getBoundingClientRect().left);
+        this.dispatchEvent(new CustomEvent('trimming', { detail: { ...cur } }));
+        return;
+      }
+      if (e.pointerType === 'mouse' && !drag) c.style.cursor = this._trimAt(e.clientX, e.clientY, false) || this._edgeAt(e.clientX, e.clientY, false) ? 'ew-resize' : '';
       if (pinch && pointers.size === 2) {
         const xs = [...pointers.values()];
         const f = pinch.d / (Math.abs(xs[0] - xs[1]) || 1);
@@ -386,6 +496,17 @@ export class TimeChart extends EventTarget {
         this._edgeDrag = null;
         this.draw();
         if (changed) this.dispatchEvent(new CustomEvent('sections', { detail: this.data.sections }));
+        return;
+      }
+      if (this._trimDrag) {
+        const { orig, cur } = this._trimDrag;
+        this._trimDrag = null;
+        if (e.pointerType !== 'mouse') this._hover(null);
+        if (cur.start !== orig.start || cur.end !== orig.end) {
+          this.data.trim = cur;
+          this.dispatchEvent(new CustomEvent('trim', { detail: { ...cur } }));
+        }
+        this.draw();
         return;
       }
       if (pointers.size < 2) pinch = null;

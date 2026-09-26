@@ -55,6 +55,8 @@ const ev = (expression) => new Promise((resolve, reject) => {
 });
 
 try {
+  // the target can show our URL before the document has actually committed
+  for (let i = 0; i < 100 && (await ev('location.origin')) !== base; i++) await sleep(100);
   for (const [i, f] of files.entries()) {
     const n = await ev(`(async () => {
       const buf = await (await fetch('/audio?i=${i}')).arrayBuffer();

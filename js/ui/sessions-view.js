@@ -5,6 +5,7 @@ import { listSessions, deleteSession, getSession } from '../store/db.js';
 import { exportSessions, safeFileName } from '../store/share.js';
 import { tempoSummary } from '../dsp/stats.js';
 import { beatTempo } from '../dsp/beats.js';
+import { trimOf, trimPoints } from '../analysis/trim.js';
 import { $, esc, toast, download, fmtBpm, fmtSigned, fmtDuration } from './dom.js';
 
 export function initSessions({ onImportFiles }) {
@@ -126,8 +127,10 @@ export function initSessions({ onImportFiles }) {
 }
 
 function quickSummary(s) {
-  if (s.analysis?.beats?.length > 16) return tempoSummary(beatTempo(s.analysis.beats));
-  if (s.analysis) return tempoSummary(s.analysis.curve.t.map((t, i) => ({ t, bpm: s.analysis.curve.bpm[i] })));
-  if (s.live) return tempoSummary(s.live.points);
+  const tr = trimOf(s);
+  const beats = s.analysis && trimPoints(s.analysis.beats.map((t) => ({ t })), tr).map((p) => p.t);
+  if (beats?.length > 16) return tempoSummary(beatTempo(beats));
+  if (s.analysis) return tempoSummary(trimPoints(s.analysis.curve.t.map((t, i) => ({ t, bpm: s.analysis.curve.bpm[i] })), tr));
+  if (s.live) return tempoSummary(trimPoints(s.live.points, tr));
   return null;
 }

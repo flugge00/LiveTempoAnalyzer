@@ -1,19 +1,23 @@
 // Analyze tab + session inspection: file upload, progress, report, chart,
 // editable sections table, bar-timing profile, playback synced to the chart.
 
-import { analyzeBlob } from '../analysis/client.js';
+import { analyzeBlob, decodeToMono } from '../analysis/client.js';
+import { splitSession, canSplitAt, suggestSongBreak, partHint } from '../analysis/split.js';
+import { encodeWav } from '../audio/wav.js';
 import { ANALYSIS_VERSION } from '../analysis/analyze.js';
-import { buildReport, liveReport, fmtTime } from '../analysis/report.js';
+import { fmtTime } from '../analysis/report.js';
+import { sessionReport, trimOf, trimPoints, normaliseTrim, MIN_TRIM_SEC } from '../analysis/trim.js';
 import { effectiveSections, editable, snapToBeat, sectionAt, canSplit, split, joinNext, colorIndexes, SECTION_NAMES } from '../analysis/sections.js';
 import { TimeChart } from './chart.js';
 import { $, esc, toast, download, fmtBpm, fmtSigned, fmtMs, fmtDuration, driftStatus, statusBadge, legend } from './dom.js';
-import { saveSession, getSession, newId, requestPersistence } from '../store/db.js';
+import { saveSession, getSession, deleteSession, newId, requestPersistence } from '../store/db.js';
 import { exportSessions, safeFileName } from '../store/share.js';
 
 export function initAnalyze({ onImportFile } = {}) {
   const chart = new TimeChart($('resChart'), {
     wheelZoom: true,
     sectionEdit: { snap: (t) => snapToBeat(session?.analysis?.beats, t) },
+    trimEdit: { snap: (t) => snapToBeat(session?.analysis?.beats, t, 0.5), minSec: MIN_TRIM_SEC },
   });
   const audio = $('resAudio');
   let session = null, report = null, series = [], audioUrl = null, busy = false;
@@ -99,7 +103,10 @@ export function initAnalyze({ onImportFile } = {}) {
     if (s.audio && (!s.analysis || outdated)) {
       try {
         if (outdated) showProgress('Updating the analysis to the latest version', 0);
-        s.analysis = await runAnalysis(s.audio, { expectedBpm: s.analysis?.options?.expectedBpm || s.settings?.targetBpm || undefined });
+        s.analysis = await runAnalysis(s.audio, {
+          expectedBpm: s.analysis?.options?.expectedBpm || s.settings?.targetBpm || undefined,
+          beatsPerBar: s.settings?.beatsPerBar,
+        });
         // the old default was "bar starts on beat 1"; downbeats are found automatically now
         if (outdated && s.settings && !s.settings.barPhase) s.settings.barPhase = 'auto';
         await saveSession(s);
@@ -112,6 +119,7 @@ export function initAnalyze({ onImportFile } = {}) {
   }
 
   function reset() {
+    setTrimMode(false);
     session = null; report = null;
     audio.pause();
     $('result').hidden = true;
@@ -132,9 +140,37 @@ export function initAnalyze({ onImportFile } = {}) {
       s.kind === 'live' ? 'live session' : s.fileName || 'file',
     ].join(' · ');
 
-    const livePts = (s.live?.points || []).map((p) => ({ t: p.t, bpm: p.bpm }));
-    report = a ? buildReport(a, st, effectiveSections(s)) : liveReport(livePts);
+    setTrimMode(false);
+    renderReport();
+    chart.resetZoom();
+
+    // bar controls
+    const bpbSel = $('resBpb'), phSel = $('resPhase');
+    bpbSel.innerHTML = [2, 3, 4, 5, 6, 7, 8].map((n) => `<option value="${n}">${n}</option>`).join('');
+    bpbSel.value = st.beatsPerBar;
+    phSel.innerHTML = (a?.accent ? '<option value="auto">Auto</option>' : '') +
+      Array.from({ length: st.beatsPerBar }, (_, i) => `<option value="${i}">${i + 1}</option>`).join('');
+    phSel.value = report.autoBars ? 'auto' : String(st.barPhase === 'auto' ? 0 : st.barPhase);
+    phSel.title = report.autoBars ? 'The "1" of each bar is found automatically. Play the recording to check the beat counter.' : '';
+    bpbSel.disabled = phSel.disabled = !a;
+
+    renderSections();
+    renderProfile();
+    setupAudio();
+    $('splitPanel').hidden = true;
+    const dur = a?.duration ?? s.duration ?? 0;
+    $('resSplit').hidden = !(s.audio || s.live?.points?.length) || dur < 20;
+  }
+
+  /** Report, insights, tiles and chart data (without touching zoom or playback). */
+  function renderReport() {
+    const s = session, a = s.analysis, st = s.settings;
+    report = sessionReport(s);
     const sum = report.summary;
+    const tr = trimOf(s);
+    $('resTrim').hidden = !tr || trimMode;
+    if (tr) $('resTrim').textContent = `Only ${fmtTime(tr.start)}–${fmtTime(tr.end)} counts`;
+    updateTrimPanel();
 
     $('insights').innerHTML = report.insights.map((i) => `<li>${esc(i)}</li>`).join('');
 
@@ -160,7 +196,7 @@ export function initAnalyze({ onImportFile } = {}) {
           points: report.bars.map((b) => ({ t: (b.t + b.end) / 2, v: b.bpm })) });
       }
     } else {
-      series.push({ id: 'live', name: 'Live tempo', color: '--line-main', gapSec: 1.1, points: livePts.map((p) => ({ t: p.t, v: p.bpm })) });
+      series.push({ id: 'live', name: 'Live tempo', color: '--line-main', gapSec: 1.1, points: (s.live?.points || []).map((p) => ({ t: p.t, v: p.bpm })) });
     }
     const target = st.targetBpm;
     const reference = target ? { value: target, band: target * 0.02, label: `Target ${target}` }
@@ -172,25 +208,62 @@ export function initAnalyze({ onImportFile } = {}) {
       reference,
       levels: a?.levels || null,
       duration: a?.duration ?? s.duration,
+      trim: tr,
     });
-    chart.resetZoom();
     if (series.length > 1) legend($('resLegend'), series, () => chart.draw());
     else $('resLegend').innerHTML = '';
+  }
 
-    // bar controls
-    const bpbSel = $('resBpb'), phSel = $('resPhase');
-    bpbSel.innerHTML = [2, 3, 4, 5, 6, 7, 8].map((n) => `<option value="${n}">${n}</option>`).join('');
-    bpbSel.value = st.beatsPerBar;
-    phSel.innerHTML = (a?.accent ? '<option value="auto">Auto</option>' : '') +
-      Array.from({ length: st.beatsPerBar }, (_, i) => `<option value="${i}">${i + 1}</option>`).join('');
-    phSel.value = report.autoBars ? 'auto' : String(st.barPhase === 'auto' ? 0 : st.barPhase);
-    phSel.title = report.autoBars ? 'The "1" of each bar is found automatically. Play the recording to check the beat counter.' : '';
-    bpbSel.disabled = phSel.disabled = !a;
+  // ---- trim: leave out the start / end ----------------------------------
+  // Trim mode shows the Start / End handles on the chart and the trim panel.
+  let trimMode = false;
+  const fullLength = () => session.analysis?.duration ?? session.duration ?? 0;
+  const currentTrim = () => trimOf(session) ?? { start: 0, end: fullLength() };
 
+  function setTrimMode(on) {
+    trimMode = !!on && !!session;
+    chart.setTrimMode(trimMode);
+    $('trimPanel').hidden = !trimMode;
+    $('resTrimBtn').setAttribute('aria-pressed', String(trimMode));
+    $('resTrim').hidden = trimMode || !trimOf(session || {});
+    if (!trimMode) return;
+    $('splitPanel').hidden = true;
+    updateTrimPanel();
+    $('trimPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  /** Range text and button states; `live` is the range while a handle is being dragged. */
+  function updateTrimPanel(live) {
+    if (!trimMode) return;
+    const dur = fullLength(), tr = live ?? currentTrim();
+    $('trimRange').textContent = `Counts: ${fmtTime(tr.start)} – ${fmtTime(tr.end)} (${fmtDuration(tr.end - tr.start)} of ${fmtDuration(dur)})`;
+    $('trimReset').disabled = !trimOf(session) && !live;
+    const okStart = cursor != null && cursor < tr.end - MIN_TRIM_SEC;
+    const okEnd = cursor != null && cursor > tr.start + MIN_TRIM_SEC;
+    $('trimStartHere').disabled = !okStart;
+    $('trimEndHere').disabled = !okEnd;
+    $('trimStartHere').textContent = okStart ? `Start at ${fmtTime(cursor)}` : 'Start at playhead';
+    $('trimEndHere').textContent = okEnd ? `End at ${fmtTime(cursor)}` : 'End at playhead';
+    const hint = cursor == null ? 'Click the chart or play the recording to place the playhead' : `Keep at least ${MIN_TRIM_SEC} s`;
+    $('trimStartHere').title = okStart ? '' : hint;
+    $('trimEndHere').title = okEnd ? '' : hint;
+  }
+
+  async function setTrim(tr) {
+    const t = normaliseTrim(tr, fullLength());
+    if (t) session.trim = t; else delete session.trim;
+    await saveSession(session);
+    renderReport();
     renderSections();
     renderProfile();
-    setupAudio();
   }
+  chart.addEventListener('trim', (e) => setTrim(e.detail));
+  chart.addEventListener('trimming', (e) => updateTrimPanel(e.detail));
+  $('resTrimBtn').onclick = () => setTrimMode(!trimMode);
+  $('trimDone').onclick = () => setTrimMode(false);
+  $('trimStartHere').onclick = () => { if (cursor != null) setTrim({ start: cursor, end: currentTrim().end }); };
+  $('trimEndHere').onclick = () => { if (cursor != null) setTrim({ start: currentTrim().start, end: cursor }); };
+  $('trimReset').onclick = () => { setTrim(null); toast('The whole recording counts again.'); };
 
   function chartSections() {
     const list = report.sections || [];
@@ -208,7 +281,7 @@ export function initAnalyze({ onImportFile } = {}) {
 
   /** Re-derive the report after a section edit, without resetting zoom or playback. */
   function refreshSections() {
-    report = buildReport(session.analysis, session.settings, effectiveSections(session));
+    report = sessionReport(session);
     $('insights').innerHTML = report.insights.map((i) => `<li>${esc(i)}</li>`).join('');
     chart.setData({ sections: chartSections() });
     renderSections();
@@ -222,9 +295,11 @@ export function initAnalyze({ onImportFile } = {}) {
     $('secReset').hidden = !session.sections;
     const colors = colorIndexes(secs);
     const cur = cursor == null ? -1 : sectionAt(secs, cursor);
+    const tr = trimOf(session);
     const rows = secs.map((s, i) => {
       const sm = s.summary;
-      return `<tr class="clickable${i === cur ? ' current' : ''}" data-i="${i}">
+      const out = tr && (s.end <= tr.start + 0.5 || s.start >= tr.end - 0.5);
+      return `<tr class="clickable${i === cur ? ' current' : ''}${out ? ' trimmed' : ''}" data-i="${i}"${out ? ' title="Left out: outside the part that counts"' : ''}>
         <td><span class="swatch" style="background:var(--series-${(colors[i] % 8) + 1})"></span></td>
         <td><input class="name" data-i="${i}" value="${esc(s.name)}" list="secNameList" aria-label="Section name"></td>
         <td class="num">${fmtTime(s.start)}</td>
@@ -332,7 +407,7 @@ export function initAnalyze({ onImportFile } = {}) {
       const expected = Math.round(med * f);
       $('result').hidden = true;
       try {
-        session.analysis = await runAnalysis(session.audio, { expectedBpm: expected });
+        session.analysis = await runAnalysis(session.audio, { expectedBpm: expected, beatsPerBar: session.settings.beatsPerBar });
         session.settings.targetBpm ||= null;
         await saveSession(session);
       } catch (err) { toast(`Re-analysis failed: ${err.message}`); }
@@ -372,6 +447,8 @@ export function initAnalyze({ onImportFile } = {}) {
     chart.setPlayhead(t);
     $('resTime').textContent = fmtTime(t);
     updateSectionTools();
+    updateSplit();
+    updateTrimPanel();
     if (session?.audio) audio.currentTime = t;
   }
   chart.addEventListener('seek', (e) => {
@@ -392,6 +469,8 @@ export function initAnalyze({ onImportFile } = {}) {
     showBeat(t);
     const sec = sectionAt(report.sections || [], t);
     if (sec !== lastSec) { lastSec = sec; updateSectionTools(); }
+    if (!$('splitPanel').hidden) updateSplit();
+    updateTrimPanel();
     requestAnimationFrame(tick);
   }
 
@@ -413,11 +492,78 @@ export function initAnalyze({ onImportFile } = {}) {
   }
 
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && trimMode && !$('view-analyze').hidden) { setTrimMode(false); return; }
     if (e.code !== 'Space' || $('view-analyze').hidden || !session?.audio) return;
     if (/INPUT|SELECT|TEXTAREA|BUTTON/.test(document.activeElement?.tagName)) return;
     e.preventDefault();
     $('resPlay').click();
   });
+
+  // ---- split into two songs ---------------------------------------------
+  // The playhead marks where the second song starts. The audio is cut and
+  // stored as WAV (browsers can't write mp3/webm), and each part is analyzed
+  // on its own; the two new sessions replace this one.
+  function updateSplit() {
+    if ($('splitPanel').hidden) return;
+    const ok = cursor != null && canSplitAt(session, cursor);
+    $('splitAt').textContent = cursor == null ? '–' : fmtTime(cursor);
+    $('splitGo').disabled = !ok || busy;
+    $('splitGo').title = ok ? '' : 'Click the chart where the second song starts';
+  }
+
+  $('resSplit').onclick = () => {
+    const dur = session.analysis?.duration ?? session.duration;
+    $('splitName1').value = session.name;
+    $('splitName1').placeholder = `${session.name} (1)`;
+    $('splitName2').value = '';
+    $('splitName2').placeholder = `${session.name} (2)`;
+    setTrimMode(false);
+    $('splitPanel').hidden = false;
+    if (cursor == null || !canSplitAt(session, cursor)) {
+      const t = suggestSongBreak(session.analysis) ?? dur / 2;
+      audio.pause();
+      seek(t);
+      chart.setView(Math.max(0, t - 45), Math.min(dur, t + 45));
+    }
+    updateSplit();
+    $('splitPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+  $('splitCancel').onclick = () => { $('splitPanel').hidden = true; };
+
+  $('splitGo').onclick = async () => {
+    if (busy || cursor == null || !canSplitAt(session, cursor)) return;
+    const old = session, t = cursor;
+    const parts = splitSession(old, t, { ids: [newId(), newId()], names: [$('splitName1').value, $('splitName2').value] });
+    audio.pause();
+    busy = true;
+    $('result').hidden = true;
+    try {
+      if (old.audio) {
+        showProgress('Cutting the recording', 0);
+        const { samples, sampleRate } = await decodeToMono(old.audio, 44100);
+        const cut = Math.round(t * sampleRate);
+        parts[0].audio = encodeWav(samples.subarray(0, cut), sampleRate);
+        parts[1].audio = encodeWav(samples.subarray(cut), sampleRate);
+        const ranges = [[0, t], [t, Infinity]];
+        for (const [k, p] of parts.entries()) {
+          p.analysis = await analyzeBlob(p.audio, { expectedBpm: partHint(old.analysis, ...ranges[k]), beatsPerBar: p.settings?.beatsPerBar },
+            (stage, f) => showProgress(`Song ${k + 1} of 2: ${stage}`, f));
+          p.duration = p.analysis.duration;
+        }
+      }
+      for (const p of parts) await saveSession(p);
+      await deleteSession(old.id);
+      toast(`Split into "${parts[0].name}" and "${parts[1].name}".`, 5000);
+      location.hash = `#/session/${parts[0].id}`;
+    } catch (err) {
+      console.error(err);
+      toast(`Could not split the recording: ${err.message || err}`, 7000);
+      $('result').hidden = false;
+    } finally {
+      busy = false;
+      $('progress').hidden = true;
+    }
+  };
 
   // ---- export -----------------------------------------------------------
   $('resExport').onclick = async () => {
@@ -440,7 +586,7 @@ export function initAnalyze({ onImportFile } = {}) {
       csv = 'time_s,local_bpm,offset_ms,attack_spread_ms,beat_in_bar,section\n' + report.beatPts
         .map((p) => [p.t.toFixed(3), p.bpm.toFixed(2), p.residualMs.toFixed(1), spread.get(p.t) ?? '', (barPos.get(p.t) ?? -1) + 1 || '', `"${secAt(p.t)}"`].join(',')).join('\n');
     } else {
-      csv = 'time_s,bpm,confidence\n' + session.live.points.map((p) => [p.t, p.bpm ?? '', p.c].join(',')).join('\n');
+      csv = 'time_s,bpm,confidence\n' + trimPoints(session.live.points, trimOf(session)).map((p) => [p.t, p.bpm ?? '', p.c].join(',')).join('\n');
     }
     download(`${safeFileName(session.name)}.csv`, csv, 'text/csv');
   };

@@ -2,8 +2,7 @@
 // overlaid on one chart, plus a take-by-take table: "are we getting steadier?"
 
 import { analyzeBlob } from '../analysis/client.js';
-import { buildReport, liveReport } from '../analysis/report.js';
-import { effectiveSections } from '../analysis/sections.js';
+import { sessionReport, trimOf, trimPoints } from '../analysis/trim.js';
 import { TimeChart } from './chart.js';
 import { $, esc, toast, fmtBpm, fmtSigned, fmtMs, fmtDuration, legend } from './dom.js';
 import { getSession, saveSession } from '../store/db.js';
@@ -51,15 +50,15 @@ export function initCompare() {
   }
 
   function makeTake(s, i) {
-    const a = s.analysis;
-    let points, report, t0;
+    // only the trimmed part counts, and takes line up where it starts
+    const a = s.analysis, tr = trimOf(s);
+    const report = sessionReport(s);
+    let points, t0;
     if (a) {
-      report = buildReport(a, s.settings || {}, effectiveSections(s));
-      points = a.curve.t.map((t, k) => ({ t, v: a.curve.bpm[k] }));
-      t0 = a.beats[0] ?? firstValid(points, (a.options?.windowSec ?? 8) / 2);
+      points = trimPoints(a.curve.t.map((t, k) => ({ t, v: a.curve.bpm[k] })), tr);
+      t0 = trimPoints(a.beats.map((t) => ({ t })), tr)[0]?.t ?? firstValid(points, (a.options?.windowSec ?? 8) / 2);
     } else {
-      points = (s.live?.points || []).map((p) => ({ t: p.t, v: p.bpm }));
-      report = liveReport(points.map((p) => ({ t: p.t, bpm: p.v })));
+      points = trimPoints((s.live?.points || []).map((p) => ({ t: p.t, v: p.bpm })), tr);
       t0 = firstValid(points, 4);
     }
     return { session: s, report, t0, points, color: `--series-${(i % 8) + 1}` };

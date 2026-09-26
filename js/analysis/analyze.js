@@ -5,15 +5,18 @@ import { onsetEnvelope } from '../dsp/onset.js';
 import { TempoModel, tempoCurve, resolveOctaves } from '../dsp/tempo.js';
 import { trackBeats, attackSpread, beatRuns } from '../dsp/beats.js';
 import { segmentSong } from '../dsp/segment.js';
-import { beatAccents } from '../dsp/downbeat.js';
+import { beatAccents, beatPositions } from '../dsp/downbeat.js';
 
 // 2: per-beat accent cues for downbeat detection
-export const ANALYSIS_VERSION = 2;
+// 3: sections fitted to whole phrases (8, 12, 16... bars)
+// 4: half-time feel counted at the full tempo
+export const ANALYSIS_VERSION = 4;
 
 /**
  * @param {Float32Array} samples mono
  * @param {number} sampleRate
- * @param {{expectedBpm?:number, minBpm?:number, maxBpm?:number, windowSec?:number, sections?:boolean}} opts
+ * @param {{expectedBpm?:number, minBpm?:number, maxBpm?:number, windowSec?:number, sections?:boolean,
+ *   beatsPerBar?:number}} opts beatsPerBar: section lengths are counted in bars of this size (default 4)
  * @param {(stage:string, fraction:number)=>void} [onProgress]
  */
 export function analyzeAudio(samples, sampleRate, opts = {}, onProgress = () => {}) {
@@ -33,7 +36,7 @@ export function analyzeAudio(samples, sampleRate, opts = {}, onProgress = () => 
     expectedBpm: opts.expectedBpm, minBpm: opts.minBpm, maxBpm: opts.maxBpm, windowSec: opts.windowSec ?? 8,
   });
   const curve = tempoCurve(env, model, { active, onProgress: (p) => onProgress('Estimating tempo', 0.45 + p * 0.25) });
-  curve.bpm = resolveOctaves(curve.times, curve.bpm, (b) => model.priorAt(b));
+  curve.bpm = resolveOctaves(curve.times, curve.bpm, (b) => model.priorAt(b), { pulse: curve.pulse, confidence: curve.confidence, hint: model.expectedBpm });
   onProgress('Tracking beats', 0.72);
   const beatFrames = trackBeats(env, fps, curve, { active });
   const beats = beatFrames.map((f) => det.timeOf(f));
@@ -43,7 +46,9 @@ export function analyzeAudio(samples, sampleRate, opts = {}, onProgress = () => 
   let sections = [];
   if (opts.sections !== false && beats.length) {
     onProgress('Finding song sections', 0.85);
-    sections = sectionsPerTake(det.features(), beatFrames, beats, samples.length / sampleRate);
+    const bpb = opts.beatsPerBar ?? 4;
+    const { pos } = beatPositions(beats, bpb, 'auto', accent);
+    sections = sectionsPerTake(det.features(), beatFrames, beats, samples.length / sampleRate, pos, bpb);
   }
   onProgress('Done', 1);
 
@@ -79,7 +84,7 @@ export function analyzeAudio(samples, sampleRate, opts = {}, onProgress = () => 
  * song, but it can hold a false start before the real take, or a long stop
  * in the middle; parts shorter than 32 beats (a false start) get no sections.
  */
-function sectionsPerTake(feats, beatFrames, beats, duration) {
+function sectionsPerTake(feats, beatFrames, beats, duration, barPos, beatsPerBar) {
   const out = [];
   let offset = 0;
   const runs = beatRuns(beats);
@@ -95,7 +100,7 @@ function sectionsPerTake(feats, beatFrames, beats, duration) {
     offset = i0;
     const frames = beatFrames.slice(i0, i0 + take.length);
     if (take.length < 32) continue;
-    const segs = segmentSong(feats, frames);
+    const segs = segmentSong(feats, frames, { barPos: barPos.slice(i0, i0 + take.length), beatsPerBar });
     for (const s of segs) {
       out.push({
         start: round3(beats[offset + s.startBeat]),

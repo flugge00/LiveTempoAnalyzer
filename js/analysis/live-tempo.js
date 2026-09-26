@@ -23,6 +23,7 @@ export class LiveTempo {
     this.tracker = new TempoTracker(this.model);
     this.resolver = new OctaveResolver({
       priorAt: (b) => this.model.priorAt(b),
+      hint: () => this.model.expectedBpm,
       onRescale: (k) => this.cb.onRescale?.(k, this.takeStart),
       onNewTake: (t) => { this.takeStart = t; },
     });
@@ -75,7 +76,7 @@ export class LiveTempo {
       const r = this.tracker.update(env);
       if (r) {
         this.takeStart ??= t;
-        point = { t, bpm: this.resolver.push(t, r.bpm), confidence: r.confidence };
+        point = { t, bpm: this.resolver.push(t, r.bpm, r.pulse, r.confidence), confidence: r.confidence };
       }
     }
     // keep memory bounded
